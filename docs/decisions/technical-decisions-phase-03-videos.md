@@ -1,7 +1,7 @@
 ---
 scope_type: phase
 related_phases: [3]
-status: pending
+status: decided
 date: 2026-11-11
 scope_description: "Video upload and processing foundation (Phase 03, backend only): S3-compatible object storage (historical MinIO build, pinned and checksum-verified), 10 GB multipart upload with per-part presigned URLs and resumability, consistency between PostgreSQL, storage and the job queue, a dedicated FFmpeg/ffprobe worker, the video state machine, a unique public video identifier, Range-capable streaming and download, authorization and abuse controls, orphan cleanup, the Docker Compose topology and the test strategy. The Next.js UI is out of scope."
 ---
@@ -21,7 +21,7 @@ _Subprojects in scope:_
 > - **Test baseline (repo state, not a TD):** integration/e2e run against `streamtube_test` behind explicit guards, serialized (`maxWorkers: 1`), always inside the container. New stateful services must follow the same isolation rule (TD-15).
 
 > **Review rounds of 2026-11-11.** Round 1 (research brief) fixed the scope (backend only; the Next.js UI is excluded) and the MinIO direction. Round 2 (architecture review, this version) approved the set below and required three adjustments — TD-02 (multipart and consistency), TD-05 (`pg-boss` validation conditions) and TD-11 (presigned delivery) — all applied here.
-> - **Approved conceptually (round 2):** TD-01, TD-03, TD-04, TD-05 (conditional on the spike), TD-06, TD-07, TD-08, TD-09, TD-10, TD-12, TD-13, TD-14, TD-15, TD-16; TD-02 and TD-11 approved with the adjustments written into their text. **Formalization stays in `/plan-resolve`: every `**Decision:**` field remains `_[pending]_`; "approved" never means "decided".**
+> - **Approved conceptually (round 2):** TD-01, TD-03, TD-04, TD-05 (conditional on the spike), TD-06, TD-07, TD-08, TD-09, TD-10, TD-12, TD-13, TD-14, TD-15, TD-16; TD-02 and TD-11 approved with the adjustments written into their text. **Formalized by `/plan-resolve` on 2026-11-11: all 16 `**Decision:**` fields were filled with the user's answers (option A in every TD); the eight validations listed below remain pending for planning/implementation.**
 > - **Human decisions recorded in round 2:** (1) maximum upload **10 GiB = 10,737,418,240 bytes**, configurable (TD-01, TD-13); (2) accepted media for this phase: **MP4 with H.264 video and optional AAC audio** — anything else is rejected as unsupported, no transcoding is promised, and the file extension is never proof of compatibility (TD-07); (3) **download only by the authenticated owner** until publication/visibility exist in later phases (TD-11, TD-12); (4) **aborting an incomplete upload is supported**; cancelling a processing already started is not required (TD-09); (5) the MinIO image is to be built reproducibly from the pinned official binary with the SHA-256 verified during the build, keeping the no-maintenance warning and limiting use to local/academic environments (TD-03); (6) FFmpeg logs and persisted errors must carry **no credentials and no signature parameters, and never a presigned URL** (TD-07, TD-13).
 > - **Format note:** besides the fields required by the research skill, each TD carries three extra paragraphs requested by the architecture brief — `Trade-offs and risks`, `Implementation impact`, `References` — placed between `Recommendation` and `Decision`. Pipeline readers ignore them (they extract `Recommendation`/`Libraries` only).
 > - **Evidence gathered** (all in disposable containers/directories outside the repository, 2026-11-11):
@@ -69,7 +69,7 @@ _Subprojects in scope:_
 
 **References:** AWS S3 multipart limits https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html; AWS ListParts https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html; AWS presigned URLs https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html; tus Node server https://github.com/tus/tus-node-server (`packages/s3-store/README.md`); empirical results E2.
 
-**Decision:** _[pending]_
+**Decision:** A (S3 multipart with per-part presigned URLs)
 
 ---
 
@@ -120,7 +120,7 @@ _Subprojects in scope:_
 
 **References:** AWS multipart overview https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html; AWS CompleteMultipartUpload https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html; AbortMultipartUpload https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html; ListParts https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListParts.html; multipart ETag https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html; E2.
 
-**Decision:** _[pending]_
+**Decision:** A (verified client manifest)
 
 ---
 
@@ -173,7 +173,7 @@ _Subprojects in scope:_
 
 **References:** upstream repository and README https://github.com/minio/minio; release assets `https://github.com/minio/minio/releases/download/RELEASE.2025-09-07T16-13-09Z/` (downloaded and hash-verified in E1); `Dockerfile.release` and `LICENSE` at the tag (raw.githubusercontent.com); `dl.min.io` 410 notice (E1); Garage compatibility https://garagehq.deuxfleurs.fr/documentation/reference-manual/s3-compatibility/; SeaweedFS S3 wiki https://github.com/seaweedfs/seaweedfs/wiki/Amazon-S3-API; RustFS matrix https://github.com/rustfs/rustfs/blob/main/docs/architecture/s3-compatibility-matrix.md; AIStor pricing https://www.min.io/pricing.
 
-**Decision:** _[pending]_
+**Decision:** A (pinned MinIO from GitHub release asset, SHA-256-verified custom image)
 
 ---
 
@@ -205,7 +205,8 @@ _Subprojects in scope:_
 
 **References:** AWS SDK v3 checksum fallback note https://github.com/aws/aws-sdk-js-v3/blob/main/supplemental-docs/MD5_FALLBACK.md; presigner README https://github.com/aws/aws-sdk-js-v3/blob/main/packages/s3-request-presigner/README.md; AWS presigned URLs https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html; E2.
 
-**Decision:** _[pending]_
+**Decision:** A (AWS SDK v3, two endpoints)
+**Libraries:** `@aws-sdk/client-s3@^3.x`, `@aws-sdk/s3-request-presigner@^3.x`
 
 ---
 
@@ -247,7 +248,8 @@ _Subprojects in scope:_
 
 **References:** pg-boss docs and `package.json` https://github.com/timgit/pg-boss (`docs/api/jobs.md`, `docs/api/queues.md`, `docs/api/adapters.md`); BullMQ production guide https://github.com/taskforcesh/bullmq/blob/master/docs/gitbook/guide/going-to-production.md; `@nestjs/bullmq` https://github.com/nestjs/bull; NestJS RabbitMQ https://docs.nestjs.com/microservices/rabbitmq; TypeORM `PostgresQueryRunner` (installed 0.3.28).
 
-**Decision:** _[pending]_
+**Decision:** A (pg-boss)
+**Libraries:** `pg-boss@^12.x`
 
 ---
 
@@ -282,7 +284,7 @@ _Subprojects in scope:_
 
 **References:** NestJS standalone applications (Context7 docs); architecture diagram `docs/diagrams/software-arch.mermaid`; E3.
 
-**Decision:** _[pending]_
+**Decision:** A (second entrypoint in nestjs-project)
 
 ---
 
@@ -317,7 +319,7 @@ _Subprojects in scope:_
 
 **References:** FFmpeg http protocol https://ffmpeg.org/ffmpeg-protocols.html; ffprobe https://ffmpeg.org/ffprobe.html; formats/`faststart`/`probesize` https://ffmpeg.org/ffmpeg-formats.html; `fluent-ffmpeg` https://npmjs.com/package/fluent-ffmpeg; E3.
 
-**Decision:** _[pending]_
+**Decision:** A (system ffmpeg/ffprobe via spawn)
 
 ---
 
@@ -351,7 +353,7 @@ _Subprojects in scope:_
 
 **References:** FFmpeg http protocol (`seekable`, `reconnect*`) https://ffmpeg.org/ffmpeg-protocols.html; E3.
 
-**Decision:** _[pending]_
+**Decision:** A (HTTP Range over presigned GET)
 
 ---
 
@@ -405,7 +407,7 @@ Duplicate/late events are ignored (zero rows); handlers produce the same outputs
 
 **References:** AWS Complete/Abort semantics (TD-02); pg-boss retry options (TD-05).
 
-**Decision:** _[pending]_
+**Decision:** A (orthogonal publication and processing_status)
 
 ---
 
@@ -440,7 +442,7 @@ Duplicate/late events are ignored (zero rows); handlers produce the same outputs
 
 **References:** npm registry metadata for `nanoid`/`sqids` (2026-11-11); PostgreSQL error behavior in an aborted transaction (the recorded CHANNEL-NICKNAME-RACE evidence, `25P02`).
 
-**Decision:** _[pending]_
+**Decision:** A (random base62 id with unique index)
 
 ---
 
@@ -476,7 +478,7 @@ Duplicate/late events are ignored (zero rows); handlers produce the same outputs
 
 **References:** RFC 9110 §14 and §15.3.7/§15.5.17 https://www.rfc-editor.org/rfc/rfc9110.html; MDN range requests https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Range_requests; AWS presigned URLs https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html; NestJS streaming files https://docs.nestjs.com/v11/techniques/streaming-files; Express `req.range` (Express repo docs, `request.md`); E2.
 
-**Decision:** _[pending]_
+**Decision:** A (presigned GET, Range directly on storage)
 
 ---
 
@@ -520,7 +522,7 @@ Channel-isolation tests: a second authenticated user cannot start-with, complete
 
 **References:** `phase-02-auth/TD-02` (guards), `TD-07` (error contract); `src/channels/entities/channel.entity.ts` (one channel per user).
 
-**Decision:** _[pending]_
+**Decision:** A (owner-only until published, single policy function)
 
 ---
 
@@ -556,7 +558,7 @@ Channel-isolation tests: a second authenticated user cannot start-with, complete
 
 **References:** AWS presigned URLs https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html; AWS POST policy conditions (`content-length-range`, AWS SDK docs); AWS CopyObject 5 GB limit https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html; E2, E3.
 
-**Decision:** _[pending]_
+**Decision:** A (layered controls)
 
 ---
 
@@ -591,7 +593,7 @@ Channel-isolation tests: a second authenticated user cannot start-with, complete
 
 **References:** AWS AbortMultipartUpload https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html; pg-boss `schedule()` docs; Garage compatibility page (TD-03); E2.
 
-**Decision:** _[pending]_
+**Decision:** A (scheduled reaper/reconciler)
 
 ---
 
@@ -626,7 +628,7 @@ Channel-isolation tests: a second authenticated user cannot start-with, complete
 
 **References:** `nestjs-project/CLAUDE.md` and README (test database section); E2, E3; `.claude/skills/testing-guide-nestjs-project`.
 
-**Decision:** _[pending]_
+**Decision:** A (real services with isolation guards)
 
 ---
 
@@ -661,7 +663,7 @@ Channel-isolation tests: a second authenticated user cannot start-with, complete
 
 **References:** `nestjs-project/compose.yaml`; MinIO health endpoints (verified on the pinned build, E1; MinIO docs page https://docs.min.io/community/minio-object-store/operations/monitoring/healthcheck-probe.html); `phase-01-configuracao-base/TD-01..TD-04`.
 
-**Decision:** _[pending]_
+**Decision:** A (extend nestjs-project/compose.yaml)
 
 ---
 
@@ -669,19 +671,19 @@ Channel-isolation tests: a second authenticated user cannot start-with, complete
 
 | ID | Scope | Decision | Recommendation | Choice |
 |----|-------|----------|---------------|--------|
-| TD-01 | Backend | Large-file upload protocol and transport | A (multipart, per-part presigned URLs; direction approved by the brief) | _[pending]_ |
-| TD-02 | Backend | Upload resumability, completion and cross-system consistency | A (client-recorded manifest verified against paginated `ListParts`; PostgreSQL business state; `HeadObject`/reconciliation for ambiguity; approved with adjustments) | _[pending]_ |
-| TD-03 | Backend | S3-compatible object storage server (MinIO) | A (pinned MinIO release from the GitHub asset, SHA-256-verified image; local/academic only) | _[pending]_ |
-| TD-04 | Backend | S3 client library and endpoint/signing model | A (AWS SDK v3, internal + public endpoints; direction approved by the brief) | _[pending]_ |
-| TD-05 | Backend | Background job queue and job-loss prevention | A (`pg-boss`), conditional on the planning spike; fallback = durable outbox/reconciliation, no silent Redis | _[pending]_ |
-| TD-06 | Backend | Media worker topology and responsibilities | A (second entrypoint, separate Compose service) | _[pending]_ |
-| TD-07 | Backend | FFmpeg/ffprobe toolchain, validity rules and limits | A (system binaries via `spawn`, no shell; MP4/H.264/optional AAC only; URL-free logs) | _[pending]_ |
-| TD-08 | Backend | Processing input access and scratch storage | A (read over HTTP), escalate to C if needed | _[pending]_ |
-| TD-09 | Backend | Video lifecycle state machine and failure handling | A (orthogonal publication and processing status, compare-and-set) | _[pending]_ |
-| TD-10 | Backend | Unique public video identifier and storage keys | A (random base62 + unique index + bounded `ON CONFLICT` retry) | _[pending]_ |
-| TD-11 | Backend | HTTP streaming and download delivery | A (authorize → presigned GET → Range directly on storage); API proxy = future alternative | _[pending]_ |
-| TD-12 | Backend | Authorization, ownership by channel and isolation | A (owner-only until published; owner-only download; one policy function) | _[pending]_ |
-| TD-13 | Backend | Upload validation, abuse controls and untrusted files | A (layered controls) | _[pending]_ |
-| TD-14 | Backend | Orphan resource cleanup and reconciliation | A (scheduled reaper/reconciler) | _[pending]_ |
-| TD-15 | Backend | Test strategy for storage, queue, worker and API contract | A (real services with isolation guards; no frontend) | _[pending]_ |
-| TD-16 | Repo-wide | Docker Compose topology and environment contract | A (extend `nestjs-project/compose.yaml`) | _[pending]_ |
+| TD-01 | Backend | Large-file upload protocol and transport | A (multipart, per-part presigned URLs; direction approved by the brief) | A |
+| TD-02 | Backend | Upload resumability, completion and cross-system consistency | A (client-recorded manifest verified against paginated `ListParts`; PostgreSQL business state; `HeadObject`/reconciliation for ambiguity; approved with adjustments) | A |
+| TD-03 | Backend | S3-compatible object storage server (MinIO) | A (pinned MinIO release from the GitHub asset, SHA-256-verified image; local/academic only) | A |
+| TD-04 | Backend | S3 client library and endpoint/signing model | A (AWS SDK v3, internal + public endpoints; direction approved by the brief) | A |
+| TD-05 | Backend | Background job queue and job-loss prevention | A (`pg-boss`), conditional on the planning spike; fallback = durable outbox/reconciliation, no silent Redis | A |
+| TD-06 | Backend | Media worker topology and responsibilities | A (second entrypoint, separate Compose service) | A |
+| TD-07 | Backend | FFmpeg/ffprobe toolchain, validity rules and limits | A (system binaries via `spawn`, no shell; MP4/H.264/optional AAC only; URL-free logs) | A |
+| TD-08 | Backend | Processing input access and scratch storage | A (read over HTTP), escalate to C if needed | A |
+| TD-09 | Backend | Video lifecycle state machine and failure handling | A (orthogonal publication and processing status, compare-and-set) | A |
+| TD-10 | Backend | Unique public video identifier and storage keys | A (random base62 + unique index + bounded `ON CONFLICT` retry) | A |
+| TD-11 | Backend | HTTP streaming and download delivery | A (authorize → presigned GET → Range directly on storage); API proxy = future alternative | A |
+| TD-12 | Backend | Authorization, ownership by channel and isolation | A (owner-only until published; owner-only download; one policy function) | A |
+| TD-13 | Backend | Upload validation, abuse controls and untrusted files | A (layered controls) | A |
+| TD-14 | Backend | Orphan resource cleanup and reconciliation | A (scheduled reaper/reconciler) | A |
+| TD-15 | Backend | Test strategy for storage, queue, worker and API contract | A (real services with isolation guards; no frontend) | A |
+| TD-16 | Repo-wide | Docker Compose topology and environment contract | A (extend `nestjs-project/compose.yaml`) | A |
