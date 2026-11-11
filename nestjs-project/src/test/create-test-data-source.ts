@@ -111,6 +111,17 @@ export function createTestTypeOrmModule(
   });
 }
 
+/**
+ * Empties the test schema: drops every table (including `migrations`) and
+ * ENUM type, keeping extensions (`uuid-ossp`). TypeORM runs it on a single
+ * connection inside one transaction, so the DROPs cannot deadlock each other
+ * the way concurrent `DROP TABLE ... CASCADE` on pooled connections do.
+ */
+export async function resetTestSchema(dataSource: DataSource): Promise<void> {
+  await assertConnectedToTestDatabase(dataSource);
+  await dataSource.dropDatabase();
+}
+
 export async function cleanAllTables(dataSource: DataSource): Promise<void> {
   await assertConnectedToTestDatabase(dataSource);
   await dataSource.query('DELETE FROM "refresh_tokens"');
