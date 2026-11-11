@@ -46,16 +46,65 @@ $ npm run start:prod
 
 ## Run tests
 
+All commands run **inside the container** (`docker compose exec nestjs-api ...`), with the infrastructure up (`docker compose up -d`).
+
+| Command | What runs | Touches a database |
+|---|---|---|
+| `npm run test:unit` | `*.spec.ts` (Jest project `unit`) | No — `DB_HOST` is forced to an unresolvable `.invalid` host |
+| `npm run test:integration` | `*.integration-spec.ts` (Jest project `integration`) | Yes — `DB_TEST_NAME` only |
+| `npm test` | Both projects above | Yes — `DB_TEST_NAME` only |
+| `npm run test:e2e` | `test/*.e2e-spec.ts` | Yes — `DB_TEST_NAME` only |
+| `npm run test:cov` | Both Jest projects with coverage | Yes — `DB_TEST_NAME` only |
+| `npm run test:db:prepare` | Creates (if missing), resets and migrates the test database, without running tests | Yes — `DB_TEST_NAME` only |
+
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+docker compose exec nestjs-api npm run test:unit
+docker compose exec nestjs-api npm run test:integration
+docker compose exec nestjs-api npm run test:e2e
 ```
+
+### Test database setup (once per developer)
+
+Integration and e2e tests never use the development database (`DB_NAME=streamtube`). They run against a dedicated database whose target must be declared explicitly in your local `.env` (see `.env.example`). This configuration is done once per developer and machine. The test **schema** is not kept: it is recreated on every run (see below).
+
+```dotenv
+DB_TEST_NAME=streamtube_test
+DB_TEST_SERVER_ID=<system_identifier of your PostgreSQL server>
+```
+
+Get the server identifier with:
+
+```bash
+docker compose exec db psql -U streamtube -d streamtube -tAc "SELECT system_identifier FROM pg_control_system()"
+```
+
+- `DB_TEST_NAME` must match `^[a-z][a-z0-9_]*_test$`. Keep `DB_NAME` pointing at your development database (`streamtube`). The guard does **not** yet reject `DB_NAME` equal to `DB_TEST_NAME` (see "Known pending issues").
+- `DB_TEST_SERVER_ID` pins the PostgreSQL server allowed to host the test database. Its real value is specific to your local server: put it in `.env` only, never in `.env.example` or in a commit. `.env.example` keeps the variable name with an empty value.
+- Without both variables, integration and e2e runs refuse to start. Unit tests do not need them.
+- The database itself is created automatically on the first run. No manual `CREATE DATABASE` is needed. After that, every integration/e2e run and every `npm run test:db:prepare` drops and recreates its schema.
+
+Before changing anything, every run checks the target: the variables are validated, then `current_database()` and the server `system_identifier` are verified on the live connection. Any mismatch aborts the run; there is no fallback to `DB_NAME`.
+
+### ⚠️ The test database is destroyed on every run
+
+Each integration or e2e run (and `npm run test:db:prepare`) **drops every table, ENUM type and the migration history of `DB_TEST_NAME`**, then re-applies all migrations. The migrations suite also empties the schema before each of its tests. Never point `DB_TEST_NAME` at a database whose data you want to keep.
+
+### Suites run serially — do not override it
+
+Integration and e2e suites share the single test database, so they must never run in parallel. Parallel workers cause hook timeouts, FK violations and cross-suite contamination; the migrations suite resets the schema while other suites are using it.
+
+- Both Jest configs set `"maxWorkers": 1` (`package.json` → `jest`, and `test/jest-e2e.json`), so every command above already runs serially.
+- **Do not pass `-w` / `--maxWorkers`** to runs that include integration or e2e tests. A CLI `-w N` overrides the config, and the guards cannot detect it.
+- A second, concurrent Jest process is rejected by an advisory lock on `DB_TEST_NAME` ("Another test run is using ..."). The lock protects against separate runs, not against parallel workers inside one run.
+- Jest's `--selectProjects` takes several values. Put file paths in `--testPathPatterns` instead of right after it: `npx jest --selectProjects integration --testPathPatterns src/auth`.
+
+### Known pending issues (technical debt)
+
+- **Lint:** `eslint "{src,apps,libs,test}/**/*.ts"` reports 149 errors that predate the test baseline repair. They block the final Definition of Done and must be fixed before Phase 03 ends. New changes must not add lint problems. Note that `npm run lint` applies `--fix`. To check without changing files, run `npx eslint "{src,apps,libs,test}/**/*.ts"`.
+- **Guard gap — `DB_NAME` equal to `DB_TEST_NAME`:** `applyTestDatabaseEnv()` (`src/test/test-database.ts`) accepts this case on purpose, because the setup itself rewrites `DB_NAME` to the test database. It rejects only a *different* `*_test` `DB_NAME`. As a result, a developer whose `.env` uses a `*_test` database as `DB_NAME` would have that database reset by the tests. The development database `streamtube` cannot be reached, because only `*_test` names on the pinned server are ever reset. To be fixed independently before merging into `dev`.
+- **L1 — `auth.service.integration-spec.ts`:** when a `beforeAll` fails, the `afterAll` calls `dataSource.destroy()` on `undefined` and adds a secondary `TypeError`. The original error is still reported.
+- **L2 — `auth.service.integration-spec.ts`:** when `Test.createTestingModule().compile()` fails after TypeORM has connected, that connection is never closed. Jest prints "did not exit one second after the test run" and the process lingers about 10 s, until pg's idle timeout. This happens only on an already-failing run.
+- **OpenAPI export test:** the `beforeAll` of `src/openapi-export.integration-spec.ts` takes about 3.8 s in a serial run, roughly 76 % of Jest's default 5 s hook timeout. It is the hook most at risk of a timeout.
 
 ## Deployment
 

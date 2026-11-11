@@ -63,13 +63,17 @@ npm run start:dev                        # Dev server with hot-reload
 npm run build                            # Compile to dist/
 npm run start:prod                       # Run compiled build
 
-npm test                                 # Unit tests
-npm run test:watch                       # Unit tests in watch mode
-npm run test:cov                         # Coverage report
-npm run test:e2e                         # End-to-end tests (always with --runInBand)
+npm run test:unit                        # Unit tests only (no database)
+npm run test:integration                 # Integration tests only (test database)
+npm test                                 # Unit + integration tests
+npm run test:watch                       # Unit + integration tests in watch mode
+npm run test:cov                         # Coverage report (unit + integration)
+npm run test:e2e                         # End-to-end tests (test database)
+npm run test:db:prepare                  # Create/reset/migrate the test database without running tests
 
 npx tsc --noEmit                         # Type-check (required before declaring a task done)
-npm run lint                             # ESLint with auto-fix
+npm run lint                             # ESLint with auto-fix (modifies files)
+npx eslint "{src,apps,libs,test}/**/*.ts" # ESLint check only (no --fix)
 npm run format                           # Prettier formatting
 ```
 
@@ -82,18 +86,35 @@ docker compose exec db pg_isready -U streamtube
 curl http://localhost:3000
 ```
 
+### Test database
+
+Integration and e2e tests run **only** against the dedicated test database named by `DB_TEST_NAME` (e.g. `streamtube_test`), never against the development database (`DB_NAME=streamtube`). See `README.md` → "Run tests" for the full setup.
+
+- Both `DB_TEST_NAME` (must match `^[a-z][a-z0-9_]*_test$`) and `DB_TEST_SERVER_ID` (the server's `system_identifier`) must be set in the local `.env`. Without them, integration and e2e runs refuse to start. Get the identifier with `docker compose exec db psql -U streamtube -d streamtube -tAc "SELECT system_identifier FROM pg_control_system()"`.
+- The **real value** of `DB_TEST_SERVER_ID` is machine-specific. It must never be included in `.env.example`, test fixtures or any commit; it lives only in the local, git-ignored `.env`. `.env.example` must keep documenting the variable **name with an empty value** (`DB_TEST_SERVER_ID=`). Fixtures use a fictitious identifier.
+- Configuring these variables is a one-time step per developer. The test schema is not persistent: it is recreated on every run (see below).
+- Keep `DB_NAME` pointing at the development database. The guard does not yet reject `DB_NAME` equal to `DB_TEST_NAME` (pending fix, see `README.md` → "Known pending issues").
+- Every connection is verified (`current_database()` + `system_identifier`) before any schema change. Do not add fallbacks to `DB_NAME`, and do not bypass the guards in `src/test/test-database.ts`.
+- **Destructive by design:** every integration/e2e run (via Jest `globalSetup`) and `npm run test:db:prepare` drop all tables, ENUM types and migration history of `DB_TEST_NAME`, then re-apply all migrations. The migrations suite also empties the schema before each test. Never point `DB_TEST_NAME` at data you want to keep.
+- New database-backed test files must use the helpers in `src/test/create-test-data-source.ts` (`createTestDataSource`, `createTestTypeOrmModule`, `cleanAllTables`, `resetTestSchema`), which enforce the guard.
+- New migrations must be added to `TEST_MIGRATIONS` in `src/test/test-migrations.ts`; the run fails fast if the list is out of sync with `src/database/migrations/`.
+
 ### Test execution
 
-Integration and e2e suites share a single test database. They **must** be run with `--runInBand`:
+Integration and e2e suites share a single test database, so they **must** run serially. Both Jest configs enforce it with `"maxWorkers": 1` (`package.json` → `jest`, and `test/jest-e2e.json`), so the npm scripts are already serialized:
 
 ```bash
-docker compose exec nestjs-api npm test -- --runInBand
-docker compose exec nestjs-api npm run test:e2e   # already configured
+docker compose exec nestjs-api npm test
+docker compose exec nestjs-api npm run test:e2e
 ```
 
-Parallel execution causes FK violations, deadlocks, and cross-suite contamination because suites truncate or seed shared tables concurrently.
+**Never pass `-w` / `--maxWorkers`** to a run that includes integration or e2e tests. The CLI flag overrides the config, and the guards cannot detect it. Parallel execution causes hook timeouts, FK violations, deadlocks and cross-suite contamination, because suites truncate, seed or reset shared tables concurrently. A separate concurrent Jest process is rejected by an advisory lock on `DB_TEST_NAME`. That lock does not protect against parallel workers inside one run.
 
-During active development, run only the tests related to the file being changed (`npm test -- path/to/file.spec.ts`). Before declaring a task done, run the full suite — see the global `CLAUDE.md` → "Definition of Done (Technical)".
+During active development, run only the tests related to the file being changed (`npm test -- path/to/file.spec.ts`). `--selectProjects` takes several values, so pass paths through `--testPathPatterns` when combining them (`npx jest --selectProjects integration --testPathPatterns src/auth`). Before declaring a task done, run the full suite — see the global `CLAUDE.md` → "Definition of Done (Technical)".
+
+### Lint baseline (pending)
+
+`npx eslint "{src,apps,libs,test}/**/*.ts"` currently reports **149 pre-existing errors**. They are a registered blocker for the final Definition of Done and must be fixed in a dedicated task before Phase 03 ends. Until then, a change passes lint only if it adds **no new** lint problems. Check with `npx eslint` (no `--fix`), because `npm run lint` rewrites files.
 
 ## Long-running Processes
 
@@ -119,8 +140,9 @@ Conventions for **how to write** each kind of test (mocking patterns, AAA struct
 
 These settings are required in `package.json` (jest config) and `test/jest-e2e.json` for the project's tests to work correctly:
 
-- `setupFiles: ["dotenv/config"]` — without this, `.env` is not loaded inside the Jest process. `DB_HOST`, `JWT_SECRET`, etc. fall back to undefined or to the host's `localhost`, breaking container-to-container DNS.
-- `testRegex: '.*\\.(spec|integration-spec)\\.ts$'` — covers both unit (`*.spec.ts`) and integration (`*.integration-spec.ts`) suffixes.
+- `setupFiles: ["dotenv/config", ...]` — without this, `.env` is not loaded inside the Jest process. `DB_HOST`, `JWT_SECRET`, etc. fall back to undefined or to the host's `localhost`, breaking container-to-container DNS.
+- `projects` in `package.json` split the suffixes: `unit` (`testRegex: '.*\\.spec\\.ts$'`, setup file `src/test/setup-unit-env.ts` blocks DB access) and `integration` (`testRegex: '.*\\.integration-spec\\.ts$'`, `globalSetup`/`globalTeardown` prepare and lock the test database, setup file `src/test/setup-test-env.ts` points `DB_NAME` at `DB_TEST_NAME`). `test/jest-e2e.json` uses the same globalSetup/globalTeardown and setup file.
+- `maxWorkers: 1` at the **root** of both configs. Jest ignores `maxWorkers` inside a `projects` entry, so it cannot be scoped to the integration project.
 
 Do not add new test-file suffixes; if a new test type is needed, update the regex deliberately.
 
