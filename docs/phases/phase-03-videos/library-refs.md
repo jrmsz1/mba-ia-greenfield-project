@@ -13,7 +13,7 @@ libs:
     context7_id: "/timgit/pg-boss"
     fetched_at: "2026-11-11T18:10:29-03:00"
 sources_mtime:
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-11T18:09:11-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-11T20:36:03-03:00"
 ---
 
 # phase-03-videos — Library references

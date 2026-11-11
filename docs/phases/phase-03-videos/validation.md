@@ -4,8 +4,8 @@ name: phase-03-videos
 status: clean
 issue_count: 0
 sources_mtime:
-  docs/phases/phase-03-videos/context.md: "2026-11-11T18:17:47-03:00"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-11T18:13:20-03:00"
+  docs/phases/phase-03-videos/context.md: "2026-11-11T20:36:03-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-11T20:36:03-03:00"
 issues:
   - id: AMB-1
     status: resolved
@@ -75,9 +75,30 @@ issues:
     status: resolved
     resolved_by: phase-03-videos/TD-16
     summary: "TD-16 pending — Docker Compose topology and environment contract"
+  - id: IC-1
+    status: resolved
+    resolved_by: phase-03-videos/TD-09, phase-03-videos/TD-02
+    summary: "TD-09 transition table lacks uploading → uploaded required by TD-02 matrix"
+  - id: IC-2
+    status: resolved
+    resolved_by: phase-03-videos/TD-16, phase-03-videos/TD-11, phase-03-videos/TD-13, phase-03-videos/TD-14
+    summary: "TD-16 canonical env keys omit TTL and threshold keys used by TD-11/TD-14"
+  - id: ICC-1
+    status: resolved
+    resolved_by: phase-03-videos/TD-13, phase-02-auth/TD-08
+    summary: "TD-13 throttles video endpoints; phase-02-auth/TD-08 is AuthModule-only"
+  - id: AMB-2
+    status: resolved
+    resolved_by: phase-03-videos/TD-13, phase-03-videos/TD-14, phase-03-videos/TD-16
+    summary: "TD-13 per-owner quota metric undecided; limit defaults deferred to planning"
+  - id: AMB-3
+    status: resolved
+    resolved_by: phase-03-videos/TD-08, phase-03-videos/TD-16
+    summary: "Worker input presigned URL has no TTL key; TD-08 needs TTL > job timeout"
 ---
 
 # phase-03-videos — Validation
+
 
 
 ## Findings
@@ -100,7 +121,7 @@ _None._
 
 ### Inherited Constraint Conflicts
 
-_None._ (Re-checked on 2026-11-11, after the Required Technical Verification Gates section was added to context.md, against the 16 decided TDs and the inherited conventions and TDs: no contradiction found.)
+_None._
 
 ### Unresolved Open Questions
 
@@ -129,3 +150,8 @@ _None._ (No UI scope in this phase.)
 - **OQ-14** _(resolved_by phase-03-videos/TD-14)_ — TD-14 decided: option A — Orphan resource cleanup and reconciliation.
 - **OQ-15** _(resolved_by phase-03-videos/TD-15)_ — TD-15 decided: option A — Test strategy for storage, queue, worker and the API contract.
 - **OQ-16** _(resolved_by phase-03-videos/TD-16)_ — TD-16 decided: option A — Docker Compose topology and environment contract.
+- **IC-1** _(resolved_by phase-03-videos/TD-09, phase-03-videos/TD-02)_ — TD-09 transition table lacks uploading → uploaded required by TD-02 matrix. Append revision to TD-09 (transitions `uploading` → `uploaded` with identity proof, `uploading`/`completing` → `failed` `UPLOAD_LOST` and → `expired`; no transition on timeout/reset/5xx) and to TD-02 (identity and integrity proof replaces the size-only check). Decisions unchanged (A).
+- **IC-2** _(resolved_by phase-03-videos/TD-16, phase-03-videos/TD-11, phase-03-videos/TD-13, phase-03-videos/TD-14)_ — TD-16 canonical env keys omit TTL and threshold keys used by TD-11/TD-14. Append revisions to TD-16 (complete key list: three TTL keys replacing `PRESIGN_TTL_SECONDS`, `COMPLETING_STALE_MINUTES`, named worker/media/quota/test keys without invented defaults), TD-11 (playback/download TTL keys), TD-13 (part URL TTL key) and TD-14 (threshold keys). Decisions unchanged (A).
+- **ICC-1** _(resolved_by phase-03-videos/TD-13, phase-02-auth/TD-08)_ — TD-13 throttles video endpoints; phase-02-auth/TD-08 is AuthModule-only. Code check: `ThrottlerGuard` is a global `APP_GUARD` with one unnamed policy `{ ttl: 60000, limit: 10 }`. Append revision to TD-13 (Phase 03 video controllers opt out with `@SkipThrottle()`; abuse control by per-owner quotas, simultaneous-upload limit, ownership, idempotency, size and expiry) and a documentary revision to phase-02-auth/TD-08 (actual registration scope). Auth limits unchanged.
+- **AMB-2** _(resolved_by phase-03-videos/TD-13, phase-03-videos/TD-14, phase-03-videos/TD-16)_ — TD-13 per-owner quota metric undecided; limit defaults deferred to planning. Append revision to TD-13 (quota = pending bytes, sum of declared sizes of the owner's `uploading`/`completing` uploads, key `MAX_PENDING_UPLOAD_BYTES_PER_OWNER`), TD-16 (key added; initial values of the seven limit keys set by `plan-build` as configurable defaults tested with small overrides) and TD-14 (`COMPLETING_STALE_MINUTES` default set by `plan-build`). Decisions unchanged (A).
+- **AMB-3** _(resolved_by phase-03-videos/TD-08, phase-03-videos/TD-16)_ — Worker input presigned URL has no TTL key; TD-08 needs TTL > job timeout. Append revision to TD-08 (worker input URL uses `PROCESSING_INPUT_PRESIGN_TTL_SECONDS`, default set by `plan-build`, startup validation rejects a value not greater than `WORKER_JOB_TIMEOUT_SECONDS`) and to TD-16 (key added to the canonical list). Decisions unchanged (A).

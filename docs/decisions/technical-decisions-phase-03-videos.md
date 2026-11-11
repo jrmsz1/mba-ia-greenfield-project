@@ -122,6 +122,10 @@ _Subprojects in scope:_
 
 **Decision:** A (verified client manifest)
 
+**Revisions:**
+
+- 2026-11-11 — Recovery rule aligned with TD-09 (IC-1): after `NoSuchUpload` or an ambiguous `CompleteMultipartUpload` outcome, a row in `uploading` or `completing` moves to `uploaded` only when the object at the video's storage key is proven to be the one this authorized upload produced — identity and integrity, not a matching size alone (this replaces "present with the declared size" in the failure matrix; the proof is Required Technical Verification Gate 4); when the upload is definitively lost, no valid object exists and `upload_expires_at` has not passed, the row moves to `failed` (`UPLOAD_LOST`); when expiry is proven (`upload_expires_at` has passed) and no valid object was completed, it moves to `expired`; a timeout, connection reset or 5xx is ambiguous and never by itself returns the row to `uploading` or marks it `failed` — it stays `completing` until the retried complete or the reconciler has evidence; compare-and-set transitions, idempotency and reconciliation are unchanged. Rationale: Revisar TD-09 e TD-02 — align the recovery matrix with the TD-09 transitions.
+
 ---
 
 ## TD-03: S3-compatible object storage server (MinIO)
@@ -355,6 +359,10 @@ _Subprojects in scope:_
 
 **Decision:** A (HTTP Range over presigned GET)
 
+**Revisions:**
+
+- 2026-11-11 — Processing-input URL TTL key (AMB-3): the presigned GET the worker uses to read the stored video (signed with the internal endpoint, TD-04) uses `PROCESSING_INPUT_PRESIGN_TTL_SECONDS`; its initial value is set by `plan-build` as a configurable default, and configuration validation at startup rejects a value that is not greater than `WORKER_JOB_TIMEOUT_SECONDS` (the existing rule "the URL TTL must exceed the job timeout"); the URL stays a temporary credential, never logged or persisted (TD-07). Rationale: Chave própria.
+
 ---
 
 ## TD-09: Video lifecycle state machine and failure handling
@@ -408,6 +416,10 @@ Duplicate/late events are ignored (zero rows); handlers produce the same outputs
 **References:** AWS Complete/Abort semantics (TD-02); pg-boss retry options (TD-05).
 
 **Decision:** A (orthogonal publication and processing_status)
+
+**Revisions:**
+
+- 2026-11-11 — Transitions added to match the TD-02 recovery protocol (IC-1): `uploading` → `uploaded` when storage reports `NoSuchUpload` and the object at the video's key is proven to be this upload's (identity and integrity, not size alone), resolved by the retried complete or the reconciler; the existing `completing` → `uploaded` row requires the same identity proof instead of "the object with the declared size"; `uploading`/`completing` → `failed` (`UPLOAD_LOST`) when the upload is definitively lost, no valid object exists and `upload_expires_at` has not passed; `uploading`/`completing` → `expired` when `upload_expires_at` has passed (expiry proven) and no valid object was completed; a timeout, connection reset or 5xx causes no transition (`completing` stays `completing`: no return to `uploading`, no `failed`); every transition remains compare-and-set and idempotent. Rationale: Revisar TD-09 e TD-02 — align the transition table with the TD-02 recovery protocol.
 
 ---
 
@@ -479,6 +491,10 @@ Duplicate/late events are ignored (zero rows); handlers produce the same outputs
 **References:** RFC 9110 §14 and §15.3.7/§15.5.17 https://www.rfc-editor.org/rfc/rfc9110.html; MDN range requests https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Range_requests; AWS presigned URLs https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html; NestJS streaming files https://docs.nestjs.com/v11/techniques/streaming-files; Express `req.range` (Express repo docs, `request.md`); E2.
 
 **Decision:** A (presigned GET, Range directly on storage)
+
+**Revisions:**
+
+- 2026-11-11 — Distinct TTL keys (IC-2): playback URLs use `PLAYBACK_PRESIGN_TTL_SECONDS` (proposed initial value 3600) and download URLs use `DOWNLOAD_PRESIGN_TTL_SECONDS` (proposed initial value 900); the generic `PRESIGN_TTL_SECONDS` is removed; every TTL stays within the SigV4 presign maximum of 7 days (TD-04). Rationale: Nomear tudo, sem defaults — complete the canonical environment list (TD-16); TTL initial values as proposed in the resolution request.
 
 ---
 
@@ -560,6 +576,12 @@ Channel-isolation tests: a second authenticated user cannot start-with, complete
 
 **Decision:** A (layered controls)
 
+**Revisions:**
+
+- 2026-11-11 — Part URL TTL key (IC-2): per-part upload URLs use `UPLOAD_PART_PRESIGN_TTL_SECONDS` (proposed initial value 900) and stay re-requestable. Rationale: Nomear tudo, sem defaults — complete the canonical environment list (TD-16); TTL initial value as proposed in the resolution request.
+- 2026-11-11 — Throttling scope made explicit (ICC-1): the existing `ThrottlerGuard` is bound globally (provided as `APP_GUARD` in `AuthModule`) with one unnamed policy `{ ttl: 60000, limit: 10 }`, so without action every Phase 03 route would inherit the authentication limit; the Phase 03 video controllers therefore opt out explicitly with `@SkipThrottle()` (affected routes: every Phase 03 video endpoint — start, part URLs, status/resume, complete, abort, playback/download URL emission), and "throttler limits on control endpoints" no longer applies. The Phase 02 authentication limits are unchanged and are not extended to video routes. Phase 03 abuse control relies on per-owner quotas (metric and key fixed during planning), a per-owner limit of simultaneous uploads (`MAX_ACTIVE_UPLOADS_PER_OWNER`), ownership validation (TD-12), idempotency (TD-02), size limits (`MAX_UPLOAD_BYTES`) and upload/URL expiry. Rationale: Opt-out explícito nas rotas de vídeo.
+- 2026-11-11 — Per-owner quota metric fixed (AMB-2): the per-owner quota counts **pending bytes** — the sum of the declared sizes of the owner's uploads in `uploading` or `completing` — carried by `MAX_PENDING_UPLOAD_BYTES_PER_OWNER`; at start, a request whose declared size would push the sum above the limit, or that would exceed `MAX_ACTIVE_UPLOADS_PER_OWNER`, is rejected before any multipart upload is created; uploads leave the count on `uploaded`, `failed`, `expired` or abort; the residual risk already recorded (actual bytes can exceed the declared size until expiry/abort) is unchanged. Initial values of `MAX_PENDING_UPLOAD_BYTES_PER_OWNER` and `MAX_ACTIVE_UPLOADS_PER_OWNER` are set by `plan-build` as configurable defaults, each tested with small overrides. Rationale: Bytes pendentes; plan-build define defaults.
+
 ---
 
 ## TD-14: Orphan resource cleanup and reconciliation
@@ -594,6 +616,11 @@ Channel-isolation tests: a second authenticated user cannot start-with, complete
 **References:** AWS AbortMultipartUpload https://docs.aws.amazon.com/AmazonS3/latest/API/API_AbortMultipartUpload.html; pg-boss `schedule()` docs; Garage compatibility page (TD-03); E2.
 
 **Decision:** A (scheduled reaper/reconciler)
+
+**Revisions:**
+
+- 2026-11-11 — Threshold keys (IC-2): `UPLOAD_EXPIRY_HOURS` and `COMPLETING_STALE_MINUTES` are canonical keys (TD-16); no default value is decided for `COMPLETING_STALE_MINUTES` — it must be fixed during planning. Rationale: Nomear tudo, sem defaults.
+- 2026-11-11 — Default ownership (AMB-2): the initial value of `COMPLETING_STALE_MINUTES` is set by `plan-build` as a configurable default, tested with small overrides. Rationale: Bytes pendentes; plan-build define defaults.
 
 ---
 
@@ -664,6 +691,12 @@ Channel-isolation tests: a second authenticated user cannot start-with, complete
 **References:** `nestjs-project/compose.yaml`; MinIO health endpoints (verified on the pinned build, E1; MinIO docs page https://docs.min.io/community/minio-object-store/operations/monitoring/healthcheck-probe.html); `phase-01-configuracao-base/TD-01..TD-04`.
 
 **Decision:** A (extend nestjs-project/compose.yaml)
+
+**Revisions:**
+
+- 2026-11-11 — Canonical key list completed (IC-2): `PRESIGN_TTL_SECONDS` is replaced by `UPLOAD_PART_PRESIGN_TTL_SECONDS` (proposed 900), `PLAYBACK_PRESIGN_TTL_SECONDS` (proposed 3600) and `DOWNLOAD_PRESIGN_TTL_SECONDS` (proposed 900); added `COMPLETING_STALE_MINUTES` (TD-14, default to be fixed during planning); keys named for values the TDs declare configurable, without decided defaults: `WORKER_CONCURRENCY`, `WORKER_JOB_TIMEOUT_SECONDS` and `MEDIA_PROBE_TIMEOUT_SECONDS` (worker limits and probing bounds, TD-05/TD-06/TD-07), `MAX_VIDEO_DURATION_SECONDS` (TD-07), `MAX_ACTIVE_UPLOADS_PER_OWNER` (TD-13), `PGBOSS_SCHEMA` (queue schema, TD-05), and the test-only isolation keys `S3_TEST_BUCKET` and `PGBOSS_TEST_SCHEMA` (TD-15, mirroring `DB_TEST_NAME`); the per-owner quota key is named together with its metric during planning. No backwards-compatible alias is introduced for `PRESIGN_TTL_SECONDS` (never implemented). Rationale: Nomear tudo, sem defaults.
+- 2026-11-11 — Quota key and defaults (AMB-2): added `MAX_PENDING_UPLOAD_BYTES_PER_OWNER` (TD-13 per-owner pending-bytes quota); the initial values of `COMPLETING_STALE_MINUTES`, `MAX_ACTIVE_UPLOADS_PER_OWNER`, `MAX_PENDING_UPLOAD_BYTES_PER_OWNER`, `WORKER_CONCURRENCY`, `WORKER_JOB_TIMEOUT_SECONDS`, `MEDIA_PROBE_TIMEOUT_SECONDS` and `MAX_VIDEO_DURATION_SECONDS` are set by `plan-build` as configurable defaults (each overridable through the environment and tested with small values), keeping the TD-08 constraint that the worker's presigned input URL outlives `WORKER_JOB_TIMEOUT_SECONDS`. Rationale: Bytes pendentes; plan-build define defaults.
+- 2026-11-11 — Processing-input TTL key (AMB-3): added `PROCESSING_INPUT_PRESIGN_TTL_SECONDS` (TD-08 worker input URL), default set by `plan-build`, validated at startup to be greater than `WORKER_JOB_TIMEOUT_SECONDS`; the canonical presign TTL keys are now `UPLOAD_PART_PRESIGN_TTL_SECONDS`, `PLAYBACK_PRESIGN_TTL_SECONDS`, `DOWNLOAD_PRESIGN_TTL_SECONDS` and `PROCESSING_INPUT_PRESIGN_TTL_SECONDS`. Rationale: Chave própria.
 
 ---
 
