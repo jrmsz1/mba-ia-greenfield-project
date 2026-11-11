@@ -22,7 +22,7 @@ import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
 import {
   cleanAllTables,
-  createTestDataSource,
+  createTestTypeOrmModule,
 } from '../test/create-test-data-source';
 import { clearMailpitMessages } from '../test/mailpit';
 import { AuthService } from './auth.service';
@@ -35,14 +35,13 @@ import {
 const ALL_ENTITIES = [User, Channel, RefreshToken, VerificationToken];
 
 async function createAuthTestModule(): Promise<TestingModule> {
-  const ds = createTestDataSource(ALL_ENTITIES);
   return Test.createTestingModule({
     imports: [
       ConfigModule.forRoot({
         isGlobal: true,
         load: [appConfig, authConfig, mailConfig],
       }),
-      TypeOrmModule.forRoot(ds.options),
+      createTestTypeOrmModule(ALL_ENTITIES),
       TypeOrmModule.forFeature([
         User,
         Channel,
