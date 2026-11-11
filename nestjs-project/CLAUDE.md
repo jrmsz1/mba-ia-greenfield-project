@@ -112,9 +112,11 @@ docker compose exec nestjs-api npm run test:e2e
 
 During active development, run only the tests related to the file being changed (`npm test -- path/to/file.spec.ts`). `--selectProjects` takes several values, so pass paths through `--testPathPatterns` when combining them (`npx jest --selectProjects integration --testPathPatterns src/auth`). Before declaring a task done, run the full suite — see the global `CLAUDE.md` → "Definition of Done (Technical)".
 
-### Lint baseline (pending)
+### Lint status
 
-`npx eslint "{src,apps,libs,test}/**/*.ts"` currently reports **149 pre-existing errors**. They are a registered blocker for the final Definition of Done and must be fixed in a dedicated task before Phase 03 ends. Until then, a change passes lint only if it adds **no new** lint problems. Check with `npx eslint` (no `--fix`), because `npm run lint` rewrites files.
+The lint baseline is clean. The original 149 errors (found while repairing the backend test baseline) were fixed in dedicated commits, and `npx eslint "{src,apps,libs,test}/**/*.ts"` now reports **0 errors and 1 known warning**: `@typescript-eslint/no-unsafe-argument` in `src/auth/auth.service.integration-spec.ts`. `npm run lint` passes with exit code 0. A change must not add lint problems, and rules must not be disabled to make code pass.
+
+`npm run lint` runs ESLint with `--fix` and rewrites files. To check without changing anything, run `npx eslint "{src,apps,libs,test}/**/*.ts"` directly.
 
 ## Long-running Processes
 
