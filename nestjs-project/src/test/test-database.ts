@@ -43,6 +43,56 @@ function requireEnv(env: NodeJS.ProcessEnv, key: string): string {
   return value;
 }
 
+/**
+ * `DB_NAME` values replaced by `applyTestDatabaseEnv()`, keyed by the env
+ * object it rewrote (`undefined` when DB_NAME was unset). Module-private on
+ * purpose: nothing outside this module (environment variables, .env files)
+ * can forge this record, so the guard stays fail-closed. If the record is
+ * missing (e.g. a fresh module instance), a rewritten DB_NAME is treated as
+ * the original one and rejected.
+ */
+const replacedDatabaseNames = new WeakMap<
+  NodeJS.ProcessEnv,
+  string | undefined
+>();
+
+/**
+ * The development database as configured by the developer, i.e. `DB_NAME`
+ * before `applyTestDatabaseEnv()` rewrote it. The record is used only in the
+ * exact state that function leaves behind (DB_NAME equal to the test
+ * database); in any other state the current DB_NAME is, by definition, the
+ * original one.
+ */
+function originalDevelopmentDatabase(
+  env: NodeJS.ProcessEnv,
+  testDatabase: string,
+): string | undefined {
+  const current = env.DB_NAME?.trim() || undefined;
+  if (current === testDatabase && replacedDatabaseNames.has(env)) {
+    return replacedDatabaseNames.get(env);
+  }
+  return current;
+}
+
+function assertNotDevelopmentDatabase(
+  env: NodeJS.ProcessEnv,
+  testDatabase: string,
+): void {
+  const developmentDatabase = originalDevelopmentDatabase(env, testDatabase);
+  if (!developmentDatabase) return;
+  if (developmentDatabase === testDatabase) {
+    throw new TestDatabaseGuardError(
+      `DB_NAME and DB_TEST_NAME are both "${testDatabase}": the tests would reset the development database. Point DB_NAME at the development database.`,
+    );
+  }
+  // DB_NAME is the development database; it is never a valid test target.
+  if (TEST_DATABASE_NAME_PATTERN.test(developmentDatabase)) {
+    throw new TestDatabaseGuardError(
+      `DB_NAME="${developmentDatabase}" and DB_TEST_NAME="${testDatabase}" are both test databases; the target is ambiguous.`,
+    );
+  }
+}
+
 export function readTestDatabaseConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): TestDatabaseConfig {
@@ -64,6 +114,8 @@ export function readTestDatabaseConfig(
     );
   }
 
+  assertNotDevelopmentDatabase(env, database);
+
   const rawPort = requireEnv(env, 'DB_PORT');
   const port = Number(rawPort);
   if (!Number.isInteger(port) || port <= 0) {
@@ -84,19 +136,20 @@ export function readTestDatabaseConfig(
  * Points `DB_NAME` (read by `databaseConfig` / `AppModule`) at the test
  * database for the current Jest environment. Runs from `setupFiles`, so every
  * test that boots `AppModule` connects to the test database.
+ *
+ * Idempotent: the original DB_NAME is recorded in module-private state before
+ * being rewritten, so a repeated call validates the developer's value, not
+ * the rewritten one. A configuration whose original DB_NAME equals
+ * DB_TEST_NAME is rejected by `readTestDatabaseConfig()` and leaves `env`
+ * untouched.
  */
 export function applyTestDatabaseEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): void {
   const config = readTestDatabaseConfig(env);
-  const appDatabase = env.DB_NAME?.trim();
-  if (appDatabase && appDatabase !== config.database) {
-    // DB_NAME is the development database; it is never a valid test target.
-    if (TEST_DATABASE_NAME_PATTERN.test(appDatabase)) {
-      throw new TestDatabaseGuardError(
-        `DB_NAME="${appDatabase}" and DB_TEST_NAME="${config.database}" are both test databases; the target is ambiguous.`,
-      );
-    }
+  const current = env.DB_NAME?.trim() || undefined;
+  if (current !== config.database) {
+    replacedDatabaseNames.set(env, current);
   }
   env.DB_NAME = config.database;
 }

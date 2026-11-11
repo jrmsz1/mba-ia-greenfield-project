@@ -47,6 +47,42 @@ describe('readTestDatabaseConfig', () => {
 
     expect(() => readTestDatabaseConfig(env)).toThrow(TestDatabaseGuardError);
   });
+
+  it('should allow development "streamtube" with test "streamtube_test"', () => {
+    expect(() => readTestDatabaseConfig({ ...VALID_ENV })).not.toThrow();
+  });
+
+  it('should allow an unset DB_NAME', () => {
+    const env = { ...VALID_ENV, DB_NAME: undefined };
+
+    expect(() => readTestDatabaseConfig(env)).not.toThrow();
+  });
+
+  it('should reject a development database equal to the test database', () => {
+    const env = { ...VALID_ENV, DB_NAME: 'streamtube_test' };
+
+    expect(() => readTestDatabaseConfig(env)).toThrow(
+      /DB_NAME and DB_TEST_NAME are both "streamtube_test"/,
+    );
+  });
+
+  it('should reject a development database that is another test database', () => {
+    const env = { ...VALID_ENV, DB_NAME: 'other_test' };
+
+    expect(() => readTestDatabaseConfig(env)).toThrow(/ambiguous/);
+  });
+
+  it('should not trust an externally provided original DB_NAME', () => {
+    const env = {
+      ...VALID_ENV,
+      DB_NAME: 'streamtube_test',
+      DB_NAME_BEFORE_TEST_OVERRIDE: 'streamtube',
+    };
+
+    expect(() => readTestDatabaseConfig(env)).toThrow(
+      /DB_NAME and DB_TEST_NAME are both "streamtube_test"/,
+    );
+  });
 });
 
 describe('applyTestDatabaseEnv', () => {
@@ -58,11 +94,55 @@ describe('applyTestDatabaseEnv', () => {
     expect(env.DB_NAME).toBe('streamtube_test');
   });
 
-  it('should be idempotent once applied', () => {
-    const env = { ...VALID_ENV, DB_NAME: 'streamtube_test' };
+  it('should be idempotent across consecutive calls after a valid initialization', () => {
+    const env = { ...VALID_ENV };
 
     applyTestDatabaseEnv(env);
+    applyTestDatabaseEnv(env);
 
+    expect(env.DB_NAME).toBe('streamtube_test');
+    expect(() => readTestDatabaseConfig(env)).not.toThrow();
+  });
+
+  it('should keep the original DB_NAME private to the rewritten env object', () => {
+    const env = { ...VALID_ENV };
+    applyTestDatabaseEnv(env);
+
+    // A copy carries the rewritten DB_NAME but not the private record.
+    expect(() => readTestDatabaseConfig({ ...env })).toThrow(
+      TestDatabaseGuardError,
+    );
+  });
+
+  it('should reject DB_NAME later changed to an unsafe value', () => {
+    const env = { ...VALID_ENV };
+    applyTestDatabaseEnv(env);
+
+    env.DB_NAME = 'other_test';
+
+    expect(() => readTestDatabaseConfig(env)).toThrow(/ambiguous/);
+    expect(() => applyTestDatabaseEnv(env)).toThrow(TestDatabaseGuardError);
+    expect(env.DB_NAME).toBe('other_test');
+  });
+
+  it('should reject a development database equal to the test database and leave env untouched', () => {
+    const env: NodeJS.ProcessEnv = { ...VALID_ENV, DB_NAME: 'streamtube_test' };
+
+    expect(() => applyTestDatabaseEnv(env)).toThrow(TestDatabaseGuardError);
+    expect(env.DB_NAME).toBe('streamtube_test');
+    expect(() => applyTestDatabaseEnv(env)).toThrow(TestDatabaseGuardError);
+  });
+
+  it('should reject an equal database even with a forged DB_NAME_BEFORE_TEST_OVERRIDE', () => {
+    const env: NodeJS.ProcessEnv = {
+      ...VALID_ENV,
+      DB_NAME: 'streamtube_test',
+      DB_NAME_BEFORE_TEST_OVERRIDE: 'streamtube',
+    };
+
+    expect(() => applyTestDatabaseEnv(env)).toThrow(
+      /DB_NAME and DB_TEST_NAME are both "streamtube_test"/,
+    );
     expect(env.DB_NAME).toBe('streamtube_test');
   });
 

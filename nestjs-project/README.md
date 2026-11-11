@@ -78,7 +78,7 @@ Get the server identifier with:
 docker compose exec db psql -U streamtube -d streamtube -tAc "SELECT system_identifier FROM pg_control_system()"
 ```
 
-- `DB_TEST_NAME` must match `^[a-z][a-z0-9_]*_test$`. Keep `DB_NAME` pointing at your development database (`streamtube`). The guard does **not** yet reject `DB_NAME` equal to `DB_TEST_NAME` (see "Known pending issues").
+- `DB_TEST_NAME` must match `^[a-z][a-z0-9_]*_test$`. Keep `DB_NAME` pointing at your development database (`streamtube`). The guard rejects a configuration where the original `DB_NAME` is equal to `DB_TEST_NAME`, or is another `*_test` database. This check runs in the Jest `globalSetup` (integration and e2e), in `npm run test:db:prepare` and in every test file, before any connection is opened.
 - `DB_TEST_SERVER_ID` pins the PostgreSQL server allowed to host the test database. Its real value is specific to your local server: put it in `.env` only, never in `.env.example` or in a commit. `.env.example` keeps the variable name with an empty value.
 - Without both variables, integration and e2e runs refuse to start. Unit tests do not need them.
 - The database itself is created automatically on the first run. No manual `CREATE DATABASE` is needed. After that, every integration/e2e run and every `npm run test:db:prepare` drops and recreates its schema.
@@ -101,7 +101,6 @@ Integration and e2e suites share the single test database, so they must never ru
 ### Known pending issues (technical debt)
 
 - **Lint:** `eslint "{src,apps,libs,test}/**/*.ts"` reports 149 errors that predate the test baseline repair. They block the final Definition of Done and must be fixed before Phase 03 ends. New changes must not add lint problems. Note that `npm run lint` applies `--fix`. To check without changing files, run `npx eslint "{src,apps,libs,test}/**/*.ts"`.
-- **Guard gap — `DB_NAME` equal to `DB_TEST_NAME`:** `applyTestDatabaseEnv()` (`src/test/test-database.ts`) accepts this case on purpose, because the setup itself rewrites `DB_NAME` to the test database. It rejects only a *different* `*_test` `DB_NAME`. As a result, a developer whose `.env` uses a `*_test` database as `DB_NAME` would have that database reset by the tests. The development database `streamtube` cannot be reached, because only `*_test` names on the pinned server are ever reset. To be fixed independently before merging into `dev`.
 - **L1 — `auth.service.integration-spec.ts`:** when a `beforeAll` fails, the `afterAll` calls `dataSource.destroy()` on `undefined` and adds a secondary `TypeError`. The original error is still reported.
 - **L2 — `auth.service.integration-spec.ts`:** when `Test.createTestingModule().compile()` fails after TypeORM has connected, that connection is never closed. Jest prints "did not exit one second after the test run" and the process lingers about 10 s, until pg's idle timeout. This happens only on an already-failing run.
 - **OpenAPI export test:** the `beforeAll` of `src/openapi-export.integration-spec.ts` takes about 3.8 s in a serial run, roughly 76 % of Jest's default 5 s hook timeout. It is the hook most at risk of a timeout.
