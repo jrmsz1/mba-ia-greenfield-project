@@ -3,7 +3,7 @@ import * as crypto from 'crypto';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { JwtModule } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
-import { Repository } from 'typeorm';
+import type { FindOneOptions } from 'typeorm';
 import authConfig from '../config/auth.config';
 import {
   EmailAlreadyExistsException,
@@ -13,7 +13,9 @@ import {
   TokenExpiredException,
   TokenReuseDetectedException,
 } from '../common/exceptions/domain.exception';
+import { Channel } from '../channels/entities/channel.entity';
 import { MailService } from '../mail/mail.service';
+import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
 import { AuthService } from './auth.service';
 import { RefreshToken } from './entities/refresh-token.entity';
@@ -31,71 +33,143 @@ const mockAuthConfig = {
   passwordResetTokenExpirationHours: 1,
 };
 
+// Entity fixtures: a real entity instance carrying only the fields a test sets.
+function makeEntity<T extends object>(
+  entity: new () => T,
+  fields: Partial<T> = {},
+): T {
+  return Object.assign(new entity(), fields);
+}
+
+// A jest.fn() whose signature follows the real method, so it can be handed to
+// the Nest module and asserted on directly (no access through a class method,
+// which @typescript-eslint/unbound-method rejects).
+function mockOf<F extends (...args: any[]) => any>(): jest.Mock<
+  ReturnType<F>,
+  Parameters<F>
+> {
+  return jest.fn<ReturnType<F>, Parameters<F>>();
+}
+
+// Partial fake of the TypeORM query builder: only the chain AuthService calls.
+interface QueryBuilderMock {
+  update: jest.Mock;
+  set: jest.Mock;
+  where: jest.Mock;
+  andWhere: jest.Mock;
+  execute: jest.Mock;
+}
+
+function makeQueryBuilderMock(): QueryBuilderMock {
+  return {
+    update: jest.fn().mockReturnThis(),
+    set: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    execute: jest.fn().mockResolvedValue(undefined),
+  };
+}
+
+function createMocks() {
+  return {
+    usersService: {
+      findByEmail: mockOf<UsersService['findByEmail']>(),
+      findByEmailWithChannel: mockOf<UsersService['findByEmailWithChannel']>(),
+      createUserWithChannel: mockOf<UsersService['createUserWithChannel']>(),
+      save: mockOf<UsersService['save']>().mockResolvedValue(makeEntity(User)),
+    },
+    mailService: {
+      sendConfirmationEmail:
+        mockOf<MailService['sendConfirmationEmail']>().mockResolvedValue(
+          undefined,
+        ),
+      sendPasswordResetEmail:
+        mockOf<MailService['sendPasswordResetEmail']>().mockResolvedValue(
+          undefined,
+        ),
+    },
+    verificationTokenRepository: {
+      create: jest.fn<VerificationToken, [Partial<VerificationToken>]>(),
+      save: jest
+        .fn<Promise<VerificationToken>, [VerificationToken]>()
+        .mockResolvedValue(makeEntity(VerificationToken)),
+      findOne: jest.fn<
+        Promise<VerificationToken | null>,
+        [FindOneOptions<VerificationToken>]
+      >(),
+      createQueryBuilder: jest.fn<QueryBuilderMock, [alias?: string]>(),
+    },
+    refreshTokenRepository: {
+      create: jest
+        .fn<RefreshToken, [Partial<RefreshToken>]>()
+        .mockReturnValue(makeEntity(RefreshToken)),
+      save: jest
+        .fn<Promise<RefreshToken>, [RefreshToken]>()
+        .mockResolvedValue(makeEntity(RefreshToken)),
+      findOne: jest.fn<
+        Promise<RefreshToken | null>,
+        [FindOneOptions<RefreshToken>]
+      >(),
+      createQueryBuilder: jest.fn<QueryBuilderMock, [alias?: string]>(),
+    },
+  };
+}
+
+type Mocks = ReturnType<typeof createMocks>;
+
+function buildTestModule(mocks: Mocks) {
+  return Test.createTestingModule({
+    imports: [
+      JwtModule.register({
+        secret: 'test-secret',
+        signOptions: { expiresIn: '15m' },
+      }),
+    ],
+    providers: [
+      AuthService,
+      { provide: UsersService, useValue: mocks.usersService },
+      { provide: MailService, useValue: mocks.mailService },
+      {
+        provide: getRepositoryToken(VerificationToken),
+        useValue: mocks.verificationTokenRepository,
+      },
+      {
+        provide: getRepositoryToken(RefreshToken),
+        useValue: mocks.refreshTokenRepository,
+      },
+      {
+        provide: authConfig.KEY,
+        useValue: mockAuthConfig,
+      },
+    ],
+  }).compile();
+}
+
 describe('AuthService — register', () => {
   let authService: AuthService;
-  let usersService: jest.Mocked<UsersService>;
-  let mailService: jest.Mocked<MailService>;
-  let verificationTokenRepository: jest.Mocked<Repository<VerificationToken>>;
+  let usersService: Mocks['usersService'];
+  let mailService: Mocks['mailService'];
+  let verificationTokenRepository: Mocks['verificationTokenRepository'];
+
+  function makeRegisteredUser(channelName: string): User {
+    return makeEntity(User, {
+      id: 'u1',
+      email: 'new@example.com',
+      channel: makeEntity(Channel, { name: channelName }),
+    });
+  }
 
   beforeEach(async () => {
-    const module = await Test.createTestingModule({
-      imports: [
-        JwtModule.register({
-          secret: 'test-secret',
-          signOptions: { expiresIn: '15m' },
-        }),
-      ],
-      providers: [
-        AuthService,
-        {
-          provide: UsersService,
-          useValue: {
-            findByEmail: jest.fn(),
-            createUserWithChannel: jest.fn(),
-          },
-        },
-        {
-          provide: MailService,
-          useValue: {
-            sendConfirmationEmail: jest.fn().mockResolvedValue(undefined),
-          },
-        },
-        {
-          provide: getRepositoryToken(VerificationToken),
-          useValue: {
-            create: jest.fn(),
-            save: jest.fn().mockResolvedValue({}),
-          },
-        },
-        {
-          provide: getRepositoryToken(RefreshToken),
-          useValue: {
-            create: jest.fn().mockReturnValue({}),
-            save: jest.fn().mockResolvedValue({}),
-            findOne: jest.fn(),
-            createQueryBuilder: jest.fn(),
-          },
-        },
-        {
-          provide: authConfig.KEY,
-          useValue: mockAuthConfig,
-        },
-      ],
-    }).compile();
-
+    const mocks = createMocks();
+    ({ usersService, mailService, verificationTokenRepository } = mocks);
+    const module = await buildTestModule(mocks);
     authService = module.get(AuthService);
-    usersService = module.get(UsersService);
-    mailService = module.get(MailService);
-    verificationTokenRepository = module.get(
-      getRepositoryToken(VerificationToken),
-    );
   });
 
   it('throws EmailAlreadyExistsException when email is already registered', async () => {
-    usersService.findByEmail.mockResolvedValue({
-      id: 'u1',
-      email: 'test@example.com',
-    } as any);
+    usersService.findByEmail.mockResolvedValue(
+      makeEntity(User, { id: 'u1', email: 'test@example.com' }),
+    );
 
     await expect(
       authService.register({
@@ -107,12 +181,12 @@ describe('AuthService — register', () => {
 
   it('hashes the password before creating the user', async () => {
     usersService.findByEmail.mockResolvedValue(null);
-    usersService.createUserWithChannel.mockResolvedValue({
-      id: 'u1',
-      email: 'new@example.com',
-      channel: { name: 'new' },
-    } as any);
-    verificationTokenRepository.create.mockReturnValue({} as any);
+    usersService.createUserWithChannel.mockResolvedValue(
+      makeRegisteredUser('new'),
+    );
+    verificationTokenRepository.create.mockReturnValue(
+      makeEntity(VerificationToken),
+    );
 
     await authService.register({
       email: 'new@example.com',
@@ -126,12 +200,12 @@ describe('AuthService — register', () => {
 
   it('calls createUserWithChannel with the correct email', async () => {
     usersService.findByEmail.mockResolvedValue(null);
-    usersService.createUserWithChannel.mockResolvedValue({
-      id: 'u1',
-      email: 'new@example.com',
-      channel: { name: 'new' },
-    } as any);
-    verificationTokenRepository.create.mockReturnValue({} as any);
+    usersService.createUserWithChannel.mockResolvedValue(
+      makeRegisteredUser('new'),
+    );
+    verificationTokenRepository.create.mockReturnValue(
+      makeEntity(VerificationToken),
+    );
 
     await authService.register({
       email: 'new@example.com',
@@ -146,14 +220,12 @@ describe('AuthService — register', () => {
 
   it('stores a verification token with EMAIL_CONFIRMATION type', async () => {
     usersService.findByEmail.mockResolvedValue(null);
-    usersService.createUserWithChannel.mockResolvedValue({
-      id: 'u1',
-      email: 'new@example.com',
-      channel: { name: 'new' },
-    } as any);
-    const createdToken = {
+    usersService.createUserWithChannel.mockResolvedValue(
+      makeRegisteredUser('new'),
+    );
+    const createdToken = makeEntity(VerificationToken, {
       type: VerificationTokenType.EMAIL_CONFIRMATION,
-    } as VerificationToken;
+    });
     verificationTokenRepository.create.mockReturnValue(createdToken);
 
     await authService.register({
@@ -172,12 +244,12 @@ describe('AuthService — register', () => {
 
   it('sends a confirmation email with the raw token', async () => {
     usersService.findByEmail.mockResolvedValue(null);
-    usersService.createUserWithChannel.mockResolvedValue({
-      id: 'u1',
-      email: 'new@example.com',
-      channel: { name: 'mynick' },
-    } as any);
-    verificationTokenRepository.create.mockReturnValue({} as any);
+    usersService.createUserWithChannel.mockResolvedValue(
+      makeRegisteredUser('mynick'),
+    );
+    verificationTokenRepository.create.mockReturnValue(
+      makeEntity(VerificationToken),
+    );
 
     await authService.register({
       email: 'new@example.com',
@@ -193,12 +265,12 @@ describe('AuthService — register', () => {
 
   it('returns the user id and email', async () => {
     usersService.findByEmail.mockResolvedValue(null);
-    usersService.createUserWithChannel.mockResolvedValue({
-      id: 'u1',
-      email: 'new@example.com',
-      channel: { name: 'new' },
-    } as any);
-    verificationTokenRepository.create.mockReturnValue({} as any);
+    usersService.createUserWithChannel.mockResolvedValue(
+      makeRegisteredUser('new'),
+    );
+    verificationTokenRepository.create.mockReturnValue(
+      makeEntity(VerificationToken),
+    );
 
     const result = await authService.register({
       email: 'new@example.com',
@@ -209,70 +281,16 @@ describe('AuthService — register', () => {
   });
 });
 
-function buildTestModule() {
-  return Test.createTestingModule({
-    imports: [
-      JwtModule.register({
-        secret: 'test-secret',
-        signOptions: { expiresIn: '15m' },
-      }),
-    ],
-    providers: [
-      AuthService,
-      {
-        provide: UsersService,
-        useValue: {
-          findByEmail: jest.fn(),
-          findByEmailWithChannel: jest.fn(),
-          createUserWithChannel: jest.fn(),
-          save: jest.fn().mockResolvedValue(undefined),
-        },
-      },
-      {
-        provide: MailService,
-        useValue: {
-          sendConfirmationEmail: jest.fn().mockResolvedValue(undefined),
-          sendPasswordResetEmail: jest.fn().mockResolvedValue(undefined),
-        },
-      },
-      {
-        provide: getRepositoryToken(VerificationToken),
-        useValue: {
-          create: jest.fn(),
-          save: jest.fn().mockResolvedValue({}),
-          findOne: jest.fn(),
-          createQueryBuilder: jest.fn(),
-        },
-      },
-      {
-        provide: getRepositoryToken(RefreshToken),
-        useValue: {
-          create: jest.fn().mockReturnValue({}),
-          save: jest.fn().mockResolvedValue({}),
-          findOne: jest.fn(),
-          createQueryBuilder: jest.fn(),
-        },
-      },
-      {
-        provide: authConfig.KEY,
-        useValue: mockAuthConfig,
-      },
-    ],
-  }).compile();
-}
-
 describe('AuthService — confirm', () => {
   let authService: AuthService;
-  let usersService: jest.Mocked<UsersService>;
-  let verificationTokenRepository: jest.Mocked<Repository<VerificationToken>>;
+  let usersService: Mocks['usersService'];
+  let verificationTokenRepository: Mocks['verificationTokenRepository'];
 
   beforeEach(async () => {
-    const module = await buildTestModule();
+    const mocks = createMocks();
+    ({ usersService, verificationTokenRepository } = mocks);
+    const module = await buildTestModule(mocks);
     authService = module.get(AuthService);
-    usersService = module.get(UsersService);
-    verificationTokenRepository = module.get(
-      getRepositoryToken(VerificationToken),
-    );
   });
 
   it('marks user as confirmed and token as used for a valid token', async () => {
@@ -281,14 +299,14 @@ describe('AuthService — confirm', () => {
       .createHash('sha256')
       .update(rawToken)
       .digest('hex');
-    const user = { id: 'u1', is_confirmed: false } as any;
-    const record = {
+    const user = makeEntity(User, { id: 'u1', is_confirmed: false });
+    const record = makeEntity(VerificationToken, {
       token_hash: tokenHash,
       type: VerificationTokenType.EMAIL_CONFIRMATION,
       used_at: null,
       expires_at: new Date(Date.now() + 60_000),
       user,
-    } as any;
+    });
 
     verificationTokenRepository.findOne.mockResolvedValue(record);
 
@@ -310,13 +328,13 @@ describe('AuthService — confirm', () => {
 
   it('throws TokenExpiredException when token is expired', async () => {
     const rawToken = 'b'.repeat(64);
-    const record = {
+    const record = makeEntity(VerificationToken, {
       token_hash: crypto.createHash('sha256').update(rawToken).digest('hex'),
       type: VerificationTokenType.EMAIL_CONFIRMATION,
       used_at: null,
       expires_at: new Date(Date.now() - 1000),
-      user: { id: 'u1', is_confirmed: false },
-    } as any;
+      user: makeEntity(User, { id: 'u1', is_confirmed: false }),
+    });
 
     verificationTokenRepository.findOne.mockResolvedValue(record);
 
@@ -328,18 +346,15 @@ describe('AuthService — confirm', () => {
 
 describe('AuthService — resendConfirmation', () => {
   let authService: AuthService;
-  let usersService: jest.Mocked<UsersService>;
-  let mailService: jest.Mocked<MailService>;
-  let verificationTokenRepository: jest.Mocked<Repository<VerificationToken>>;
+  let usersService: Mocks['usersService'];
+  let mailService: Mocks['mailService'];
+  let verificationTokenRepository: Mocks['verificationTokenRepository'];
 
   beforeEach(async () => {
-    const module = await buildTestModule();
+    const mocks = createMocks();
+    ({ usersService, mailService, verificationTokenRepository } = mocks);
+    const module = await buildTestModule(mocks);
     authService = module.get(AuthService);
-    usersService = module.get(UsersService);
-    mailService = module.get(MailService);
-    verificationTokenRepository = module.get(
-      getRepositoryToken(VerificationToken),
-    );
   });
 
   it('returns silently when email is not found', async () => {
@@ -352,11 +367,13 @@ describe('AuthService — resendConfirmation', () => {
   });
 
   it('returns silently when user is already confirmed', async () => {
-    usersService.findByEmailWithChannel.mockResolvedValue({
-      id: 'u1',
-      is_confirmed: true,
-      channel: { name: 'nick' },
-    } as any);
+    usersService.findByEmailWithChannel.mockResolvedValue(
+      makeEntity(User, {
+        id: 'u1',
+        is_confirmed: true,
+        channel: makeEntity(Channel, { name: 'nick' }),
+      }),
+    );
 
     await expect(
       authService.resendConfirmation('confirmed@example.com'),
@@ -365,25 +382,19 @@ describe('AuthService — resendConfirmation', () => {
   });
 
   it('invalidates old tokens and sends a new confirmation email', async () => {
-    const user = {
+    const user = makeEntity(User, {
       id: 'u1',
       email: 'user@example.com',
       is_confirmed: false,
-      channel: { name: 'nick' },
-    } as any;
+      channel: makeEntity(Channel, { name: 'nick' }),
+    });
     usersService.findByEmailWithChannel.mockResolvedValue(user);
 
-    const qbMock = {
-      update: jest.fn().mockReturnThis(),
-      set: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      execute: jest.fn().mockResolvedValue(undefined),
-    };
-    verificationTokenRepository.createQueryBuilder.mockReturnValue(
-      qbMock as any,
+    const qbMock = makeQueryBuilderMock();
+    verificationTokenRepository.createQueryBuilder.mockReturnValue(qbMock);
+    verificationTokenRepository.create.mockReturnValue(
+      makeEntity(VerificationToken),
     );
-    verificationTokenRepository.create.mockReturnValue({} as any);
 
     await authService.resendConfirmation('user@example.com');
 
@@ -404,8 +415,8 @@ describe('AuthService — resendConfirmation', () => {
 
 describe('AuthService — login', () => {
   let authService: AuthService;
-  let usersService: jest.Mocked<UsersService>;
-  let refreshTokenRepository: jest.Mocked<Repository<RefreshToken>>;
+  let usersService: Mocks['usersService'];
+  let refreshTokenRepository: Mocks['refreshTokenRepository'];
   let hashedTestPassword: string;
 
   beforeAll(async () => {
@@ -413,10 +424,10 @@ describe('AuthService — login', () => {
   });
 
   beforeEach(async () => {
-    const module = await buildTestModule();
+    const mocks = createMocks();
+    ({ usersService, refreshTokenRepository } = mocks);
+    const module = await buildTestModule(mocks);
     authService = module.get(AuthService);
-    usersService = module.get(UsersService);
-    refreshTokenRepository = module.get(getRepositoryToken(RefreshToken));
   });
 
   it('throws InvalidCredentialsException when email is not found', async () => {
@@ -431,12 +442,14 @@ describe('AuthService — login', () => {
   });
 
   it('throws InvalidCredentialsException when password is wrong', async () => {
-    usersService.findByEmail.mockResolvedValue({
-      id: 'u1',
-      email: 'user@example.com',
-      password: hashedTestPassword,
-      is_confirmed: true,
-    } as any);
+    usersService.findByEmail.mockResolvedValue(
+      makeEntity(User, {
+        id: 'u1',
+        email: 'user@example.com',
+        password: hashedTestPassword,
+        is_confirmed: true,
+      }),
+    );
 
     await expect(
       authService.login({
@@ -447,12 +460,14 @@ describe('AuthService — login', () => {
   });
 
   it('throws EmailNotConfirmedException when user is not confirmed', async () => {
-    usersService.findByEmail.mockResolvedValue({
-      id: 'u1',
-      email: 'user@example.com',
-      password: hashedTestPassword,
-      is_confirmed: false,
-    } as any);
+    usersService.findByEmail.mockResolvedValue(
+      makeEntity(User, {
+        id: 'u1',
+        email: 'user@example.com',
+        password: hashedTestPassword,
+        is_confirmed: false,
+      }),
+    );
 
     await expect(
       authService.login({
@@ -463,12 +478,14 @@ describe('AuthService — login', () => {
   });
 
   it('returns access_token and refresh_token on valid credentials', async () => {
-    usersService.findByEmail.mockResolvedValue({
-      id: 'u1',
-      email: 'user@example.com',
-      password: hashedTestPassword,
-      is_confirmed: true,
-    } as any);
+    usersService.findByEmail.mockResolvedValue(
+      makeEntity(User, {
+        id: 'u1',
+        email: 'user@example.com',
+        password: hashedTestPassword,
+        is_confirmed: true,
+      }),
+    );
 
     const result = await authService.login({
       email: 'user@example.com',
@@ -485,16 +502,17 @@ describe('AuthService — login', () => {
 
 describe('AuthService — refresh', () => {
   let authService: AuthService;
-  let refreshTokenRepository: jest.Mocked<Repository<RefreshToken>>;
+  let refreshTokenRepository: Mocks['refreshTokenRepository'];
 
-  const mockUser = { id: 'u1', email: 'user@example.com' } as any;
+  const mockUser = makeEntity(User, { id: 'u1', email: 'user@example.com' });
   const rawToken = 'a'.repeat(64);
   const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
 
   beforeEach(async () => {
-    const module = await buildTestModule();
+    const mocks = createMocks();
+    ({ refreshTokenRepository } = mocks);
+    const module = await buildTestModule(mocks);
     authService = module.get(AuthService);
-    refreshTokenRepository = module.get(getRepositoryToken(RefreshToken));
   });
 
   it('throws InvalidTokenException when token is not found', async () => {
@@ -506,14 +524,14 @@ describe('AuthService — refresh', () => {
   });
 
   it('throws TokenExpiredException when token is expired', async () => {
-    const record = {
+    const record = makeEntity(RefreshToken, {
       token_hash: tokenHash,
       family: 'family-uuid',
       user_id: 'u1',
       user: mockUser,
       expires_at: new Date(Date.now() - 1000),
       revoked_at: null,
-    } as any;
+    });
     refreshTokenRepository.findOne.mockResolvedValue(record);
 
     await expect(authService.refresh(rawToken)).rejects.toThrow(
@@ -522,16 +540,16 @@ describe('AuthService — refresh', () => {
   });
 
   it('rotates token: revokes old, persists new, returns both tokens', async () => {
-    const record = {
+    const record = makeEntity(RefreshToken, {
       token_hash: tokenHash,
       family: 'family-uuid',
       user_id: 'u1',
       user: mockUser,
       expires_at: new Date(Date.now() + 60_000),
       revoked_at: null,
-    } as any;
+    });
     refreshTokenRepository.findOne.mockResolvedValue(record);
-    refreshTokenRepository.create.mockReturnValue({} as any);
+    refreshTokenRepository.create.mockReturnValue(makeEntity(RefreshToken));
 
     const result = await authService.refresh(rawToken);
 
@@ -547,14 +565,14 @@ describe('AuthService — refresh', () => {
 
   it('returns new access token without revoking family when reuse is within grace period', async () => {
     const revokedAt = new Date(Date.now() - 5_000);
-    const record = {
+    const record = makeEntity(RefreshToken, {
       token_hash: tokenHash,
       family: 'family-uuid',
       user_id: 'u1',
       user: mockUser,
       expires_at: new Date(Date.now() + 60_000),
       revoked_at: revokedAt,
-    } as any;
+    });
     refreshTokenRepository.findOne.mockResolvedValue(record);
 
     const result = await authService.refresh(rawToken);
@@ -566,24 +584,18 @@ describe('AuthService — refresh', () => {
 
   it('revokes entire family and throws TokenReuseDetectedException beyond grace period', async () => {
     const revokedAt = new Date(Date.now() - 15_000);
-    const record = {
+    const record = makeEntity(RefreshToken, {
       token_hash: tokenHash,
       family: 'family-uuid',
       user_id: 'u1',
       user: mockUser,
       expires_at: new Date(Date.now() + 60_000),
       revoked_at: revokedAt,
-    } as any;
+    });
     refreshTokenRepository.findOne.mockResolvedValue(record);
 
-    const qbMock = {
-      update: jest.fn().mockReturnThis(),
-      set: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      execute: jest.fn().mockResolvedValue(undefined),
-    };
-    refreshTokenRepository.createQueryBuilder.mockReturnValue(qbMock as any);
+    const qbMock = makeQueryBuilderMock();
+    refreshTokenRepository.createQueryBuilder.mockReturnValue(qbMock);
 
     await expect(authService.refresh(rawToken)).rejects.toThrow(
       TokenReuseDetectedException,
@@ -598,27 +610,24 @@ describe('AuthService — refresh', () => {
 
 describe('AuthService — logout', () => {
   let authService: AuthService;
-  let refreshTokenRepository: jest.Mocked<Repository<RefreshToken>>;
+  let refreshTokenRepository: Mocks['refreshTokenRepository'];
 
   beforeEach(async () => {
-    const module = await buildTestModule();
+    const mocks = createMocks();
+    ({ refreshTokenRepository } = mocks);
+    const module = await buildTestModule(mocks);
     authService = module.get(AuthService);
-    refreshTokenRepository = module.get(getRepositoryToken(RefreshToken));
   });
 
   it('revokes all active refresh tokens for the user', async () => {
-    const qbMock = {
-      update: jest.fn().mockReturnThis(),
-      set: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      execute: jest.fn().mockResolvedValue(undefined),
-    };
-    refreshTokenRepository.createQueryBuilder.mockReturnValue(qbMock as any);
+    const qbMock = makeQueryBuilderMock();
+    refreshTokenRepository.createQueryBuilder.mockReturnValue(qbMock);
 
     await authService.logout('user-id-123');
 
-    expect(qbMock.set).toHaveBeenCalledWith({ revoked_at: expect.any(Date) });
+    // expect.any() is typed `any`; hold it as `unknown` so it can sit in a literal.
+    const anyDate: unknown = expect.any(Date);
+    expect(qbMock.set).toHaveBeenCalledWith({ revoked_at: anyDate });
     expect(qbMock.where).toHaveBeenCalledWith('user_id = :userId', {
       userId: 'user-id-123',
     });
@@ -629,18 +638,15 @@ describe('AuthService — logout', () => {
 
 describe('AuthService — forgotPassword', () => {
   let authService: AuthService;
-  let usersService: jest.Mocked<UsersService>;
-  let mailService: jest.Mocked<MailService>;
-  let verificationTokenRepository: jest.Mocked<Repository<VerificationToken>>;
+  let usersService: Mocks['usersService'];
+  let mailService: Mocks['mailService'];
+  let verificationTokenRepository: Mocks['verificationTokenRepository'];
 
   beforeEach(async () => {
-    const module = await buildTestModule();
+    const mocks = createMocks();
+    ({ usersService, mailService, verificationTokenRepository } = mocks);
+    const module = await buildTestModule(mocks);
     authService = module.get(AuthService);
-    usersService = module.get(UsersService);
-    mailService = module.get(MailService);
-    verificationTokenRepository = module.get(
-      getRepositoryToken(VerificationToken),
-    );
   });
 
   it('returns silently when email is not registered', async () => {
@@ -653,24 +659,18 @@ describe('AuthService — forgotPassword', () => {
   });
 
   it('invalidates previous reset tokens and sends a reset email', async () => {
-    const user = {
+    const user = makeEntity(User, {
       id: 'u1',
       email: 'user@example.com',
-      channel: { name: 'nick' },
-    } as any;
+      channel: makeEntity(Channel, { name: 'nick' }),
+    });
     usersService.findByEmailWithChannel.mockResolvedValue(user);
 
-    const qbMock = {
-      update: jest.fn().mockReturnThis(),
-      set: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      execute: jest.fn().mockResolvedValue(undefined),
-    };
-    verificationTokenRepository.createQueryBuilder.mockReturnValue(
-      qbMock as any,
+    const qbMock = makeQueryBuilderMock();
+    verificationTokenRepository.createQueryBuilder.mockReturnValue(qbMock);
+    verificationTokenRepository.create.mockReturnValue(
+      makeEntity(VerificationToken),
     );
-    verificationTokenRepository.create.mockReturnValue({} as any);
 
     await authService.forgotPassword('user@example.com');
 
@@ -694,18 +694,16 @@ describe('AuthService — forgotPassword', () => {
 
 describe('AuthService — resetPassword', () => {
   let authService: AuthService;
-  let usersService: jest.Mocked<UsersService>;
-  let verificationTokenRepository: jest.Mocked<Repository<VerificationToken>>;
-  let refreshTokenRepository: jest.Mocked<Repository<RefreshToken>>;
+  let usersService: Mocks['usersService'];
+  let verificationTokenRepository: Mocks['verificationTokenRepository'];
+  let refreshTokenRepository: Mocks['refreshTokenRepository'];
 
   beforeEach(async () => {
-    const module = await buildTestModule();
+    const mocks = createMocks();
+    ({ usersService, verificationTokenRepository, refreshTokenRepository } =
+      mocks);
+    const module = await buildTestModule(mocks);
     authService = module.get(AuthService);
-    usersService = module.get(UsersService);
-    verificationTokenRepository = module.get(
-      getRepositoryToken(VerificationToken),
-    );
-    refreshTokenRepository = module.get(getRepositoryToken(RefreshToken));
   });
 
   it('throws InvalidTokenException when token is not found', async () => {
@@ -718,13 +716,13 @@ describe('AuthService — resetPassword', () => {
 
   it('throws TokenExpiredException when token is expired', async () => {
     const rawToken = 'c'.repeat(64);
-    const record = {
+    const record = makeEntity(VerificationToken, {
       token_hash: crypto.createHash('sha256').update(rawToken).digest('hex'),
       type: VerificationTokenType.PASSWORD_RESET,
       used_at: null,
       expires_at: new Date(Date.now() - 1000),
-      user: { id: 'u1', password: 'oldhash' },
-    } as any;
+      user: makeEntity(User, { id: 'u1', password: 'oldhash' }),
+    });
     verificationTokenRepository.findOne.mockResolvedValue(record);
 
     await expect(
@@ -734,24 +732,18 @@ describe('AuthService — resetPassword', () => {
 
   it('hashes the new password, marks token used, and revokes refresh tokens', async () => {
     const rawToken = 'd'.repeat(64);
-    const user = { id: 'u1', password: 'oldhash' } as any;
-    const record = {
+    const user = makeEntity(User, { id: 'u1', password: 'oldhash' });
+    const record = makeEntity(VerificationToken, {
       token_hash: crypto.createHash('sha256').update(rawToken).digest('hex'),
       type: VerificationTokenType.PASSWORD_RESET,
       used_at: null,
       expires_at: new Date(Date.now() + 60_000),
       user,
-    } as any;
+    });
     verificationTokenRepository.findOne.mockResolvedValue(record);
 
-    const qbMock = {
-      update: jest.fn().mockReturnThis(),
-      set: jest.fn().mockReturnThis(),
-      where: jest.fn().mockReturnThis(),
-      andWhere: jest.fn().mockReturnThis(),
-      execute: jest.fn().mockResolvedValue(undefined),
-    };
-    refreshTokenRepository.createQueryBuilder.mockReturnValue(qbMock as any);
+    const qbMock = makeQueryBuilderMock();
+    refreshTokenRepository.createQueryBuilder.mockReturnValue(qbMock);
 
     await authService.resetPassword(rawToken, 'newplaintext');
 
