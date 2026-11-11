@@ -6,11 +6,11 @@ import { App } from 'supertest/types';
 import { DataSource, Repository } from 'typeorm';
 import { ThrottlerStorage, ThrottlerStorageService } from '@nestjs/throttler';
 import { AppModule } from '../src/app.module';
-import { AuthService } from '../src/auth/auth.service';
 import { RefreshToken } from '../src/auth/entities/refresh-token.entity';
 import { VerificationToken } from '../src/auth/entities/verification-token.entity';
 import { DomainExceptionFilter } from '../src/common/filters/domain-exception.filter';
 import { ValidationExceptionFilter } from '../src/common/filters/validation-exception.filter';
+import { MailService } from '../src/mail/mail.service';
 import { cleanAllTables } from '../src/test/create-test-data-source';
 
 describe('Auth (e2e)', () => {
@@ -59,11 +59,10 @@ describe('Auth (e2e)', () => {
     email: string,
     password = 'password123',
   ): Promise<string> {
-    const authService = app.get(AuthService);
-    const mailServiceInstance = (authService as any).mailService;
+    const mailService = app.get(MailService);
     let capturedToken = '';
     jest
-      .spyOn(mailServiceInstance, 'sendConfirmationEmail')
+      .spyOn(mailService, 'sendConfirmationEmail')
       .mockImplementationOnce(async (_e: string, _n: string, t: string) => {
         capturedToken = t;
       });
@@ -511,11 +510,10 @@ describe('Auth (e2e)', () => {
   });
 
   async function capturePasswordResetToken(email: string): Promise<string> {
-    const authService = app.get(AuthService);
-    const mailServiceInstance = (authService as any).mailService;
+    const mailService = app.get(MailService);
     let captured = '';
     jest
-      .spyOn(mailServiceInstance, 'sendPasswordResetEmail')
+      .spyOn(mailService, 'sendPasswordResetEmail')
       .mockImplementationOnce(async (_e: string, _n: string, t: string) => {
         captured = t;
       });
