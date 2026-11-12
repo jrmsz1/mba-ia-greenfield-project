@@ -161,4 +161,18 @@ printf '%s\n' "$ROLES" | while read -r role bucket_var prefix template; do
     log "identity ${role}: created"
   fi
 done
+# Positive confirmation: both buckets exist and every identity carries its
+# policy (re-read after the writes, read-only).
+for bucket_var in S3_BUCKET S3_TEST_BUCKET; do
+  mc stat "admin/$(var "$bucket_var")" >/dev/null 2>&1 || fail "bucket ${bucket_var} not found after provisioning"
+  log "bucket ${bucket_var}: verified"
+done
+printf '%s\n' "$ROLES" | while read -r role bucket_var prefix template; do
+  name="$(policy_name "$role" "${WORK}/${role}.json")"
+  info="$(mc admin user info admin "$(var "${prefix}_ACCESS_KEY_ID")" --json 2>/dev/null)" \
+    || fail "identity ${role} not found after provisioning"
+  printf '%s' "$info" | tr -d ' \n' | grep -q "\"policyName\":\"${name}\"" \
+    || fail "identity ${role} does not carry ${name} after provisioning"
+done
+log "identities: verified (7, each with its policy)"
 log "provisioning complete"

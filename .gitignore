@@ -1,2 +1,4 @@
 .history/
 settings.local.json
+# Locally generated secrets (setup scripts): never versioned, never mounted
+.local/
