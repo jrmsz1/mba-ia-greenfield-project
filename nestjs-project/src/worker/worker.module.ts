@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { rootConfigModule, rootTypeOrmModule } from '../app-roots';
+import { MediaModule } from '../media/media.module';
 import { QueueModule } from '../queue/queue.module';
 import { StorageModule } from '../storage/storage.module';
 
@@ -16,6 +17,7 @@ export const workerDatabaseModule = rootTypeOrmModule();
     rootConfigModule(),
     workerDatabaseModule,
     StorageModule,
+    MediaModule,
     QueueModule.register({ role: 'worker' }),
   ],
 })

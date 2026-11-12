@@ -112,6 +112,14 @@ docker compose exec nestjs-api npm run test:e2e
 
 **Never pass `-w` / `--maxWorkers`** to a run that includes integration or e2e tests. The CLI flag overrides the config, and the guards cannot detect it. Parallel execution causes hook timeouts, FK violations, deadlocks and cross-suite contamination, because suites truncate, seed or reset shared tables concurrently. A separate concurrent Jest process is rejected by an advisory lock on `DB_TEST_NAME`. That lock does not protect against parallel workers inside one run.
 
+**Media tests run in the worker container.** The API image is deliberately free of FFmpeg (phase-03-videos/TD-06), so the real ffprobe/ffmpeg suite (`src/media/*.integration-spec.ts`, Verification Gate 6) only runs where the pinned FFmpeg is installed:
+
+```bash
+docker compose run --rm --no-deps worker npm run test:media
+```
+
+In `nestjs-api` the same suite is reported as **skipped**, not passed. `test:media` sets `MEDIA_TOOLS_REQUIRED=1`, so a missing ffprobe fails the run instead of skipping. It runs the `integration` project, so its globalSetup resets the test database like any integration run: never run it concurrently with `npm test` or `npm run test:e2e`. A full regression is `npm test` + `npm run test:e2e` (in `nestjs-api`) + `npm run test:media` (in `worker`).
+
 During active development, run only the tests related to the file being changed (`npm test -- path/to/file.spec.ts`). `--selectProjects` takes several values, so pass paths through `--testPathPatterns` when combining them (`npx jest --selectProjects integration --testPathPatterns src/auth`). Before declaring a task done, run the full suite — see the global `CLAUDE.md` → "Definition of Done (Technical)".
 
 ### Lint status

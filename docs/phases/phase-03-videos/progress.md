@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 12/17 completed
+**SIs:** 13/17 completed
 
 ## Required Technical Verification Gates
 
@@ -12,9 +12,9 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
 | 1 | TypeORM + pg-boss transactional integration (TD-05) | PASS — approved 2026-11-11 | docs/phases/phase-03-videos/spike-pgboss.md; src/queue/pgboss-spike.integration-spec.ts |
 | 2 | Pinned MinIO image, SHA-256, Compose, healthcheck, CORS (TD-03, TD-16) | PASS — evidence executed 2026-11-11 (minisign/ARM64 preserved as options, not exercised) | docs/phases/phase-03-videos/gate-02-minio.md |
 | 3 | 10 GiB upload end to end (TD-01, TD-08, TD-13) | PENDING | — |
-| 4 | Ambiguous completion: identity and integrity proof (TD-02) | PASS — evidence executed 2026-11-12 on the pinned MinIO; awaiting human approval | docs/phases/phase-03-videos/gate-04-05-completion.md; src/videos/video-completion.service.integration-spec.ts |
-| 5 | Concurrent completions (TD-02, TD-09) | PASS — evidence executed 2026-11-12 (service level; HTTP mapping in SI-03.11); awaiting human approval | docs/phases/phase-03-videos/gate-04-05-completion.md |
-| 6 | Real media fixtures (TD-07, TD-15) | PENDING | — |
+| 4 | Ambiguous completion: identity and integrity proof (TD-02) | EVIDENCE EXECUTED 2026-11-12 on the pinned MinIO — PASS proposed, awaiting human approval | docs/phases/phase-03-videos/gate-04-05-completion.md; src/videos/video-completion.service.integration-spec.ts |
+| 5 | Concurrent completions (TD-02, TD-09) | EVIDENCE EXECUTED 2026-11-12 at service level (5 concurrent VideoCompletionService.complete calls; no concurrent HTTP scenario) — PASS proposed, awaiting human approval | docs/phases/phase-03-videos/gate-04-05-completion.md; src/videos/video-completion.service.integration-spec.ts |
+| 6 | Real media fixtures (TD-07, TD-15) | EVIDENCE EXECUTED 2026-11-12 on the worker image FFmpeg 7.1.5 — PASS proposed, awaiting human approval | docs/phases/phase-03-videos/gate-06-media.md; src/media/media-probe.integration-spec.ts |
 | 7 | Presigned URL expiry and renewal (TD-11) | PENDING | — |
 | 8 | HTTP Range directly on MinIO (TD-11) | PENDING | — |
 
@@ -145,9 +145,16 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - Shared roots extracted to src/app-roots.ts (ConfigModule + TypeORM) and used by AppModule and WorkerModule; no nest-cli.json change was needed — `nest build` (tsc) already emits dist/worker/main.worker.js, which `start:worker` and the image CMD run.
 
 ### SI-03.13 — Probe de mídia, regra de formato e thumbnail (Verification Gate 6)
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** worker container `npm run test:media` → 4 suites / 65 passed (23 integration on real FFmpeg 7.1.5 + media-rule/thumbnail-policy/redact unit); nestjs-api npm test 57 suites passed + 1 skipped (the media integration, by design) / 423 passed + 23 skipped; test:e2e 6 suites / 83; tsc 0; eslint baseline
+- **Observations:**
+  - All 6 ACs verified with executed evidence; Gate 6 report in gate-06-media.md (PASS proposed, awaiting human approval).
+  - The real-media suite runs in the worker container: TD-06 keeps the API image free of FFmpeg, so Dockerfile.dev was NOT changed. Added `npm run test:media` (MEDIA_TOOLS_REQUIRED=1); nestjs-project/CLAUDE.md documents that a full regression now also includes it.
+  - UNSUPPORTED_FORMAT vs DURATION_LIMIT_EXCEEDED kept distinct: the ceiling is evaluated only after the whole accepted-format rule passes (unit + real 6 s fixture with a 5 s ceiling).
+  - A truncated MP4 with intact header passes ffprobe (as in TD-07 E3); recorded by a test, left to the TD-02 size check and thumbnail decode per TD-07. The AC's truncated fixture (moov lost) is rejected.
+  - Brand allowlist: isom + iso2/mp41/mp42/avc1, each backed by a generated fixture (plan: "isom, completada pelas fixtures").
+  - Fixtures are generated at test time into a temp dir (no committed binaries); `test/fixtures/media/out` is git-ignored for manual runs.
+  - MediaModule (FfprobeRunner, FfmpegRunner) imported by WorkerModule; the processing handler that uses it is SI-03.14.
 
 ### SI-03.14 — Worker de processamento do vídeo
 - **Status:** pending
