@@ -51,6 +51,7 @@ function setup(found: Partial<Record<Category, string[]>>) {
       upload_binding_token: 'token',
     }),
     resolve: jest.fn().mockResolvedValue('uploaded'),
+    refuseForeignObject: jest.fn().mockResolvedValue('pending'),
   };
   const publisher = {
     publishVideoProcess: jest.fn().mockResolvedValue('job-1'),
@@ -119,6 +120,26 @@ describe('VideoReconcilerWorker', () => {
 
       expect(report.indeterminate).toBe(1);
       expect(report.expired + report.reservationsRemoved).toBe(0);
+      expect(t.writes).toEqual([]);
+    },
+  );
+
+  it.each(['expired', 'orphan'] as const)(
+    'counts an %s row whose key positively holds a missing/foreign-binding object as an identity contradiction',
+    async (category) => {
+      const t = setup({ [category]: ['v1'] });
+      confirm.mockResolvedValue('indeterminate');
+      t.recovery.refuseForeignObject.mockResolvedValue('failed');
+
+      const report = await t.worker.runOnce();
+
+      expect(t.recovery.refuseForeignObject).toHaveBeenCalledWith('v1');
+      expect(report).toMatchObject({
+        identityContradictions: 1,
+        indeterminate: 0,
+        expired: 0,
+        reservationsRemoved: 0,
+      });
       expect(t.writes).toEqual([]);
     },
   );

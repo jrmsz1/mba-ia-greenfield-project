@@ -256,28 +256,41 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
     expect(await activeJobs(video.id)).toHaveLength(1);
   });
 
-  it('preserves an object with a DIVERGENT binding: no transition, no delete, quota kept', async () => {
-    const video = await startedUpload();
-    const key = originalKey(video.id);
-    await storage.abortMultipartUpload(key, video.upload_id as string);
-    await s3.internal.send(
-      new PutObjectCommand({
-        Bucket: storage.bucket,
-        Key: key,
-        Body: randomBytes(1024),
-        Metadata: { [UPLOAD_BINDING_METADATA_KEY]: 'someone-else' },
-      }),
-    );
-    await expire(video.id);
-    const del = jest.spyOn(storage, 'deleteObject');
+  it.each([
+    ['DIVERGENT', { [UPLOAD_BINDING_METADATA_KEY]: 'someone-else' }],
+    ['MISSING', {}],
+  ])(
+    'refuses an expired upload whose key holds an object with a %s binding: failed/UPLOAD_INVALID, object retained, no delete, no job',
+    async (_label, metadata) => {
+      const video = await startedUpload();
+      const key = originalKey(video.id);
+      await storage.abortMultipartUpload(key, video.upload_id as string);
+      await s3.internal.send(
+        new PutObjectCommand({
+          Bucket: storage.bucket,
+          Key: key,
+          Body: randomBytes(1024),
+          Metadata: metadata,
+        }),
+      );
+      await expire(video.id);
+      const del = jest.spyOn(storage, 'deleteObject');
 
-    const report = await reconciler.runOnce(FAST);
+      const report = await reconciler.runOnce(FAST);
 
-    expect(report.indeterminate).toBe(1);
-    expect((await row(video.id))?.processing_status).toBe('uploading');
-    expect(del).not.toHaveBeenCalled();
-    expect(await storage.headObject(key)).not.toBeNull();
-  });
+      expect(report).toMatchObject({ identityContradictions: 1, expired: 0 });
+      expect(await row(video.id)).toMatchObject({
+        processing_status: 'failed',
+        failure_reason: 'UPLOAD_INVALID',
+      });
+      expect(del).not.toHaveBeenCalled();
+      expect(await storage.headObject(key)).not.toBeNull();
+      expect(await activeJobs(video.id)).toHaveLength(0);
+      // A second run changes nothing more.
+      expect((await reconciler.runOnce(FAST)).identityContradictions).toBe(0);
+      expect(del).not.toHaveBeenCalled();
+    },
+  );
 
   it('removes an orphan reservation only after its orphan session is aborted until NoSuchUpload and HeadObject is 404', async () => {
     const reservation = await dataSource.getRepository(Video).save(

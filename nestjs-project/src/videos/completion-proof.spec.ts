@@ -48,8 +48,14 @@ describe('evaluateCompletionProof', () => {
     expect(proof(null)).toBe('unknown');
   });
 
-  it('is unknown when the binding metadata is missing (cannot be established)', () => {
-    expect(proof(head({ uploadBinding: undefined }))).toBe('unknown');
+  it('is contradicted when a successful HeadObject shows no binding metadata (identity unproven)', () => {
+    expect(proof(head({ uploadBinding: undefined }))).toBe('contradicted');
+    expect(proof(head({ uploadBinding: '' }))).toBe('contradicted');
+  });
+
+  it('is unknown for an inconclusive read (no ETag), even without a binding', () => {
+    expect(proof(head({ etag: '' }))).toBe('unknown');
+    expect(proof(head({ etag: '', uploadBinding: undefined }))).toBe('unknown');
   });
 
   it('is contradicted by another upload binding', () => {
@@ -91,9 +97,13 @@ describe('contradictionOf', () => {
     expect(of(head({ etag: '"deadbeef-2"' }))).toBe('etag');
   });
 
-  it('reports nothing for a proven object, a missing object or a missing binding', () => {
+  it('reports a MISSING binding as a binding contradiction', () => {
+    expect(of(head({ uploadBinding: undefined }))).toBe('binding');
+  });
+
+  it('reports nothing for a proven object, a missing object or an inconclusive read', () => {
     expect(of(head())).toBeNull();
     expect(of(null)).toBeNull();
-    expect(of(head({ uploadBinding: undefined }))).toBeNull();
+    expect(of(head({ etag: '' }))).toBeNull();
   });
 });

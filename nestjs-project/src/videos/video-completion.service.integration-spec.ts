@@ -5,7 +5,7 @@
  * Gate 5 (concurrent completions). A fault proxy sits in front of
  * CompleteMultipartUpload only; every other call hits MinIO directly.
  */
-import { UploadPartCommand } from '@aws-sdk/client-s3';
+import { CopyObjectCommand, UploadPartCommand } from '@aws-sdk/client-s3';
 import { type INestApplication } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
@@ -311,6 +311,69 @@ describe('VideoCompletionService (pinned MinIO + PostgreSQL)', () => {
       completion.complete(await row(video.id), manifest),
     ).rejects.toBeInstanceOf(InvalidVideoStateException);
     expect(deleteObject).not.toHaveBeenCalled();
+    expect(await jobsFor(video.id)).toHaveLength(0);
+  });
+
+  it('Gate 4: a SUCCESSFUL HeadObject with NO upload-binding is refused as failed/UPLOAD_INVALID: object retained, zero DeleteObject, zero job, repeated complete unchanged', async () => {
+    const { video, manifest } = await uploadedVideo();
+    proxy.failNextComplete({ kind: 'drop-after-forward' });
+    await completion.complete(video, manifest); // completing, object created
+    // Same bytes at the key, but without any upload-binding metadata.
+    const key = originalKey(video.id);
+    await direct.internal.send(
+      new CopyObjectCommand({
+        Bucket: storage.bucket,
+        Key: key,
+        CopySource: `${storage.bucket}/${key}`,
+        MetadataDirective: 'REPLACE',
+        Metadata: {},
+      }),
+    );
+    const before = await storage.headObject(key);
+    expect(before).not.toBeNull();
+    expect(before?.uploadBinding).toBeUndefined();
+    const deleteObject = jest.spyOn(storage, 'deleteObject');
+
+    await expect(
+      completion.complete(await row(video.id), manifest),
+    ).rejects.toBeInstanceOf(InvalidVideoStateException);
+
+    expect(await row(video.id)).toMatchObject({
+      processing_status: 'failed',
+      failure_reason: 'UPLOAD_INVALID',
+    });
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(await jobsFor(video.id)).toHaveLength(0);
+    expect((await storage.headObject(key))?.etag).toBe(before?.etag);
+    await expect(
+      completion.complete(await row(video.id), manifest),
+    ).rejects.toBeInstanceOf(InvalidVideoStateException);
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(await jobsFor(video.id)).toHaveLength(0);
+    expect((await row(video.id)).failure_reason).toBe('UPLOAD_INVALID');
+  });
+
+  it('Gate 4: HeadObject unavailable during the proof keeps completing, never deletes and never fails the row', async () => {
+    const { video, manifest } = await uploadedVideo();
+    proxy.failNextComplete({ kind: 'drop-after-forward' });
+    await completion.complete(video, manifest);
+    const deleteObject = jest.spyOn(storage, 'deleteObject');
+    jest
+      .spyOn(storage, 'headObject')
+      .mockRejectedValue(
+        new StorageUnavailableError('ambiguous', 'TimeoutError', 'timed out'),
+      );
+
+    expect(await completion.complete(await row(video.id), manifest)).toEqual({
+      outcome: 'pending',
+      processingStatus: 'completing',
+    });
+
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(await row(video.id)).toMatchObject({
+      processing_status: 'completing',
+      failure_reason: null,
+    });
     expect(await jobsFor(video.id)).toHaveLength(0);
   });
 

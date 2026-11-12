@@ -28,6 +28,11 @@ export interface ReconcileReport {
   reservationsRemoved: number;
   staleClaimsResolved: number;
   republished: number;
+  /**
+   * An object with a missing or foreign upload-binding was found at the key:
+   * `failed`/`UPLOAD_INVALID`, object retained, no job (TD-02/TD-09 rev.).
+   */
+  identityContradictions: number;
   /** Storage could not prove the outcome: nothing changed, retried next run. */
   indeterminate: number;
   /** Another process held the video's session lock: skipped this run. */
@@ -38,6 +43,7 @@ const emptyReport = (): ReconcileReport => ({
   expired: 0,
   expiryResolvedByProof: 0,
   reservationsRemoved: 0,
+  identityContradictions: 0,
   staleClaimsResolved: 0,
   republished: 0,
   indeterminate: 0,
@@ -55,9 +61,10 @@ const emptyReport = (): ReconcileReport => ({
  *   cleanup evidence from `confirmUploadsGone` (`aborted`). An unreachable
  *   storage or an empty listing is never read as "no upload": it yields
  *   `indeterminate` and the quota stays reserved;
- * - the reconciler never deletes objects; an object with a divergent or
- *   indeterminate binding is left in place (`confirmUploadsGone` reports it
- *   `indeterminate`, `resolve` keeps it per the Gate 4 rule).
+ * - the reconciler never deletes objects. When cleanup is `indeterminate`,
+ *   only a SUCCESSFUL HeadObject showing a missing or foreign upload-binding
+ *   moves the row to `failed`/`UPLOAD_INVALID` (object retained, no job);
+ *   a storage error, an absent object or a session still open change nothing.
  */
 @Injectable()
 export class VideoReconcilerWorker {
@@ -133,7 +140,7 @@ export class VideoReconcilerWorker {
           if (resolved === 'uploaded') report.expiryResolvedByProof++;
           else if (resolved === 'pending') report.indeterminate++;
         } else {
-          report.indeterminate++;
+          await this.afterIndeterminate(report, id);
         }
       });
     }
@@ -167,7 +174,7 @@ export class VideoReconcilerWorker {
           cleanup,
         );
         if (outcome !== 'aborted') {
-          report.indeterminate++;
+          await this.afterIndeterminate(report, id);
           return;
         }
         if (
@@ -223,6 +230,19 @@ export class VideoReconcilerWorker {
         report.republished++;
       }
     }
+  }
+
+  /**
+   * `confirmUploadsGone` could not prove the key empty: refuse a foreign
+   * object if one is positively there, otherwise leave everything as is.
+   */
+  private async afterIndeterminate(
+    report: ReconcileReport,
+    videoId: string,
+  ): Promise<void> {
+    const refused = await this.recovery.refuseForeignObject(videoId);
+    if (refused === 'failed') report.identityContradictions++;
+    else report.indeterminate++;
   }
 
   private async locked(

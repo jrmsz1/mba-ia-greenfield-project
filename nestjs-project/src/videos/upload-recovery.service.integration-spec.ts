@@ -192,7 +192,7 @@ describe('UploadRecoveryService (real PostgreSQL + MinIO)', () => {
     /** Aborts the session and writes an object at the video's exclusive key. */
     const objectAtKey = async (
       video: Video,
-      binding: string,
+      binding: string | null,
       sizeBytes: number,
     ): Promise<void> => {
       const key = originalKey(video.id);
@@ -202,13 +202,61 @@ describe('UploadRecoveryService (real PostgreSQL + MinIO)', () => {
           Bucket: storage.bucket,
           Key: key,
           Body: randomBytes(sizeBytes),
-          Metadata: { [UPLOAD_BINDING_METADATA_KEY]: binding },
+          Metadata:
+            binding === null ? {} : { [UPLOAD_BINDING_METADATA_KEY]: binding },
         }),
       );
     };
 
     const tokenOf = async (id: string): Promise<string> =>
       (await recovery.loadWithToken(id)).upload_binding_token;
+
+    it('keeps an object with NO binding metadata (identity not proven): failed/UPLOAD_INVALID, no job, no DeleteObject', async () => {
+      const video = await started();
+      await objectAtKey(video, null, 12 * MIB);
+      const deleteObject = jest.spyOn(storage, 'deleteObject');
+
+      expect(await recovery.resolve(video.id)).toBe('failed');
+
+      expect(await row(video.id)).toMatchObject({
+        processing_status: 'failed',
+        failure_reason: 'UPLOAD_INVALID',
+      });
+      expect(deleteObject).not.toHaveBeenCalled();
+      expect(await storage.headObject(originalKey(video.id))).not.toBeNull();
+      expect(
+        await boss.findJobs(QUEUES.VIDEO_PROCESS, { key: video.id }),
+      ).toHaveLength(0);
+      // A repeated resolution changes nothing.
+      expect(await recovery.resolve(video.id)).toBe('pending');
+      expect(deleteObject).not.toHaveBeenCalled();
+    });
+
+    it('refuseForeignObject: refuses a missing or foreign binding, but never acts on a storage error or on the own binding of this upload', async () => {
+      const missing = await started();
+      await objectAtKey(missing, null, 1024);
+      const own = await started();
+      await objectAtKey(own, await tokenOf(own.id), 1024);
+      const unreachable = await started();
+      await objectAtKey(unreachable, 'someone-else', 1024);
+      const deleteObject = jest.spyOn(storage, 'deleteObject');
+
+      expect(await recovery.refuseForeignObject(missing.id)).toBe('failed');
+      expect(await recovery.refuseForeignObject(own.id)).toBe('pending');
+      jest
+        .spyOn(storage, 'headObject')
+        .mockRejectedValueOnce(
+          new StorageUnavailableError('transient', 'ECONNREFUSED', 'down'),
+        );
+      expect(await recovery.refuseForeignObject(unreachable.id)).toBe(
+        'pending',
+      );
+
+      expect((await row(missing.id)).failure_reason).toBe('UPLOAD_INVALID');
+      expect((await row(own.id)).processing_status).toBe('uploading');
+      expect((await row(unreachable.id)).processing_status).toBe('uploading');
+      expect(deleteObject).not.toHaveBeenCalled();
+    });
 
     it('keeps an object with ANOTHER binding (identity not proven): failed/UPLOAD_INVALID, no job, no DeleteObject', async () => {
       const video = await started();

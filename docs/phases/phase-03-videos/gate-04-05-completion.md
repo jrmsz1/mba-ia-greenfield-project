@@ -78,3 +78,25 @@ The AWS SDK v3 does not surface an HTTP 200 with an `<Error>` body as status 200
 - **Worker:** `VideoProcessingWorker` now also refuses an original whose binding differs or is missing (`UPLOAD_INVALID`, no probe, no delete). That covers verification item 1.
 
 **Documentary status:** TD-02 prescribes deletion only for a size mismatch (failure matrix), and TD-09 only for "size/parts invalid", so there is no conflict between TD-02 and the implementation. The plan's Error Catalog row `UPLOAD_INVALID` still says the object is deleted in both cases. It needs syncing via `/decide` (Append revision to TD-02) followed by an append-mode plan sync. Not done by hand.
+
+## Revision 2026-11-12 (2) — missing binding and plan alignment (final Gate 4 corrections)
+
+**Decision basis:** the TD-02 and TD-09 revisions of 2026-11-12 (binding "missing or different" = identity contradiction) and the Error Catalog row synced in `5936e5c`.
+
+- **`completion-proof.ts`:** a **successful** `HeadObject` whose `upload-binding` is missing (or empty) is now a positive `binding` contradiction, the same as a different binding. Only an absent object or an inconclusive read (no ETag) stays `unknown`. A storage failure (timeout, refused, 5xx) never reaches the proof: callers catch it and stay pending.
+- **Completion path and recovery (`resolve`):** both contradictions lead to `failed`/`UPLOAD_INVALID`, no job, object retained, no `DeleteObject`.
+- **Reconciler:** when `confirmUploadsGone` is `indeterminate`, the new `UploadRecoveryService.refuseForeignObject` acts **only** on a successful `HeadObject` that shows a missing or foreign binding (`failed`/`UPLOAD_INVALID`, retained). A storage error, an absent object or this upload's own binding change nothing. This avoids treating an open session or an unreachable MinIO as a lost upload. **Behavior change vs SI-03.15 as first approved:** an expired upload with a foreign-binding object used to stay `uploading` (indeterminate). It now becomes `failed`/`UPLOAD_INVALID` with the object retained, as TD-09's 2026-11-12 revision requires.
+- **Plan:** SI-03.10 action 4 is aligned with the TDs (missing/divergent binding retained; proven binding with size/ETag contradiction deleted after a re-read; indeterminate means no transition and no deletion). Error Catalog unchanged since `5936e5c`.
+
+**Re-run on the real PostgreSQL + pinned MinIO:** `docker compose exec -T nestjs-api npx jest --selectProjects unit integration --testPathPatterns 'completion-proof|video-completion|upload-recovery|video-reconciler' --verbose` → **59 passed**. The required cases:
+
+| Required case | Test | Observed |
+|---|---|---|
+| Missing binding on completion | `video-completion` — "a SUCCESSFUL HeadObject with NO upload-binding …" (metadata stripped by a real `CopyObject` REPLACE) | `failed`/`UPLOAD_INVALID`, object present with the same ETag, `deleteObject` not called, 0 jobs |
+| Missing binding in recovery | `upload-recovery` — "keeps an object with NO binding metadata …"; reconciler — "… MISSING binding …" | same; the reconciler reports `identityContradictions: 1`, 0 jobs, no delete |
+| Divergent binding (already approved) | `video-completion` / `upload-recovery` / reconciler "… DIVERGENT binding …" | unchanged: `failed`/`UPLOAD_INVALID`, retained, no delete, no job |
+| Proven binding, wrong size | `upload-recovery` — "deletes an object that carries THIS binding but the wrong size" + "does not delete when the object changes …" | deleted after the re-read; kept if it changed |
+| HeadObject unavailable | `video-completion` — "HeadObject unavailable during the proof keeps completing …"; `refuseForeignObject` with `ECONNREFUSED` | stays `completing` / `uploading`, `deleteObject` not called, no job, `failure_reason` null |
+| Repeated complete after UPLOAD_INVALID | missing- and divergent-binding completion tests | still `InvalidVideoStateException` (409), result unchanged, 0 jobs, no delete |
+
+**Regression:** nestjs-api `npm test` 61 suites passed + 2 skipped (470 passed + 32 skipped, the FFmpeg suites); `test:e2e` 6 suites / 84; worker `npm run test:media` 10 suites / 110; `tsc` 0; eslint baseline (1 known warning).

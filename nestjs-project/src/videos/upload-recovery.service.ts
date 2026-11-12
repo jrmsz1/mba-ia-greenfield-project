@@ -134,6 +134,46 @@ export class UploadRecoveryService {
     }
   }
 
+  /**
+   * Narrow refusal for the reconciler: when cleanup could not prove the key
+   * empty, an object positively carrying a missing or foreign upload-binding
+   * moves the row to `failed`/`UPLOAD_INVALID` (object retained, no job —
+   * TD-02/TD-09 revisions of 2026-11-12). It acts ONLY on a successful
+   * HeadObject; a storage error, an absent object or this upload's own
+   * binding change nothing, so an unreachable MinIO or a session still open
+   * is never read as a contradiction or as a lost upload.
+   */
+  async refuseForeignObject(videoId: string): Promise<RecoveryOutcome> {
+    const video = await this.loadWithToken(videoId);
+    if (
+      video.processing_status !== 'uploading' &&
+      video.processing_status !== 'completing'
+    ) {
+      return 'pending';
+    }
+    let head: ObjectHead | null;
+    try {
+      head = await this.storage.headObject(originalKey(video.id));
+    } catch (error) {
+      if (error instanceof StorageError) return 'pending';
+      throw error;
+    }
+    const contradiction = contradictionOf({
+      head,
+      declaredSizeBytes: video.declared_size_bytes,
+      bindingToken: video.upload_binding_token,
+    });
+    if (head === null || contradiction !== 'binding') return 'pending';
+    return (await this.markInvalid(
+      video.id,
+      [video.processing_status],
+      'binding',
+      head,
+    ))
+      ? 'failed'
+      : 'pending';
+  }
+
   /** `from → uploaded` and the `video.process` job, in ONE transaction (TD-05). */
   async markUploaded(
     videoId: string,
