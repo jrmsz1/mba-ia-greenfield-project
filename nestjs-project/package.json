@@ -88,6 +88,7 @@
         "displayName": "unit",
         "moduleFileExtensions": [
           "js",
+          "cjs",
           "json",
           "ts"
         ],
@@ -100,7 +101,10 @@
         "setupFiles": [
           "dotenv/config",
           "<rootDir>/test/setup-unit-env.ts"
-        ]
+        ],
+        "moduleNameMapper": {
+          "^pg-boss$": "<rootDir>/test/pg-boss-native.cjs"
+        }
       },
       {
         "displayName": "integration",

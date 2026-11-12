@@ -1,5 +1,5 @@
 {
-  "moduleFileExtensions": ["js", "json", "ts"],
+  "moduleFileExtensions": ["js", "cjs", "json", "ts"],
   "rootDir": ".",
   "maxWorkers": 1,
   "testEnvironment": "node",
@@ -9,5 +9,6 @@
   },
   "globalSetup": "<rootDir>/../src/test/global-setup.ts",
   "globalTeardown": "<rootDir>/../src/test/global-teardown.ts",
-  "setupFiles": ["dotenv/config", "<rootDir>/../src/test/setup-test-env.ts"]
+  "setupFiles": ["dotenv/config", "<rootDir>/../src/test/setup-test-env.ts"],
+  "moduleNameMapper": { "^pg-boss$": "<rootDir>/../src/test/pg-boss-native.cjs" }
 }

@@ -5,11 +5,13 @@ import { RefreshToken } from '../auth/entities/refresh-token.entity';
 import { VerificationToken } from '../auth/entities/verification-token.entity';
 import { CreateUsersAndChannels1775687773260 } from './migrations/1775687773260-CreateUsersAndChannels';
 import { CreateAuthTokens1777579850478 } from './migrations/1777579850478-CreateAuthTokens';
+import { CreatePgBossSchema1794452175254 } from './migrations/1794452175254-CreatePgBossSchema';
 import {
   createTestDataSource,
   resetTestSchema,
 } from '../test/create-test-data-source';
 import { TEST_MIGRATIONS } from '../test/test-migrations';
+import { testQueueSchema } from '../test/test-queue';
 
 const MANAGED_TABLES = [
   'channels',
@@ -47,6 +49,15 @@ async function enumExists(
     [name],
   );
   return rows[0].exists;
+}
+
+async function queueSchemaExists(dataSource: DataSource): Promise<boolean> {
+  const rows = await dataSource.query<unknown[]>(
+    `SELECT 1 FROM information_schema.tables
+     WHERE table_schema = $1 AND table_name = 'version'`,
+    [testQueueSchema()],
+  );
+  return rows.length > 0;
 }
 
 async function recordedMigrations(dataSource: DataSource): Promise<string[]> {
@@ -99,11 +110,26 @@ describe('Database migrations (integration)', () => {
     );
     expect(await existingTables(ds(), MANAGED_TABLES)).toEqual(MANAGED_TABLES);
     expect(await enumExists(ds(), TOKEN_ENUM)).toBe(true);
+    expect(await queueSchemaExists(ds())).toBe(true);
   });
 
-  it('should revert the last migration, removing its tables and ENUM type', async () => {
+  it('should revert the pg-boss migration, removing only the queue schema', async () => {
     await ds().runMigrations({ transaction: 'each' });
 
+    await ds().undoLastMigration({ transaction: 'each' });
+
+    expect(await queueSchemaExists(ds())).toBe(false);
+    expect(await existingTables(ds(), MANAGED_TABLES)).toEqual(MANAGED_TABLES);
+    expect(await recordedMigrations(ds())).toEqual([
+      CreateUsersAndChannels1775687773260.name,
+      CreateAuthTokens1777579850478.name,
+    ]);
+  });
+
+  it('should revert the auth tokens migration, removing its tables and ENUM type', async () => {
+    await ds().runMigrations({ transaction: 'each' });
+
+    await ds().undoLastMigration({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
 
     expect(await existingTables(ds(), TOKEN_TABLES)).toEqual([]);
@@ -117,15 +143,18 @@ describe('Database migrations (integration)', () => {
     ]);
   });
 
-  it('should re-apply the last migration after it was reverted', async () => {
+  it('should re-apply the reverted migrations', async () => {
     await ds().runMigrations({ transaction: 'each' });
+    await ds().undoLastMigration({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
 
     const ran = await ds().runMigrations({ transaction: 'each' });
 
     expect(ran.map((migration) => migration.name)).toEqual([
       CreateAuthTokens1777579850478.name,
+      CreatePgBossSchema1794452175254.name,
     ]);
     expect(await existingTables(ds(), MANAGED_TABLES)).toEqual(MANAGED_TABLES);
+    expect(await queueSchemaExists(ds())).toBe(true);
   });
 });

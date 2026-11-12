@@ -21,7 +21,9 @@ import {
 } from './typeorm-pgboss-db.adapter';
 
 const TEST_SCHEMA_PATTERN = /^[a-z][a-z0-9_]*_test$/;
-const PGBOSS_SCHEMA = process.env.PGBOSS_TEST_SCHEMA ?? 'pgboss_test';
+// Own schema, separate from PGBOSS_TEST_SCHEMA (used by the QueueModule in
+// tests), so dropping it in afterAll cannot affect other suites of the run.
+const PGBOSS_SCHEMA = 'pgboss_spike_test';
 const QUEUE = 'spike.video-process';
 const SPIKE_TABLE = 'pgboss_spike_videos';
 

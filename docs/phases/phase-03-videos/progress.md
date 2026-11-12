@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 4/17 completed
+**SIs:** 5/17 completed
 
 ## Required Technical Verification Gates
 
@@ -58,9 +58,15 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - Plan Tests row storage-key.spec.ts was replaced in the plan revision by multipart-cleanup.spec.ts; storage-key.ts is two one-line functions covered by the integration test keys.
 
 ### SI-03.5 — Módulo de fila pg-boss (API publica, worker consome)
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 16 passing (unit 11: queue.module, test-queue; integration 5: job-publisher on real PostgreSQL); migrations suite updated (4 passing); spike 10/10 on Node 26; regression npm test 276, test:e2e 52, tsc 0, eslint baseline
+- **Observations:**
+  - User condition 3 met: video.process created with policy exclusive; dedupe by singletonKey verified on real PostgreSQL (queued and active), plus rollback publishes nothing.
+  - Schema mechanism: hand-written migration 1794452175254-CreatePgBossSchema (skeleton from migration:create) applies getConstructionPlans(PGBOSS_SCHEMA) with the library BEGIN/COMMIT unwrapped so it joins the migration transaction (any TypeORM transaction mode); fails loudly if the plan format changes; idempotent (skips when the schema version table exists).
+  - Test isolation: setup-test-env and prepare-test-database rewrite PGBOSS_SCHEMA to PGBOSS_TEST_SCHEMA (mirrors DB_NAME); the test queue schema is dropped before migrations on every run. The spike now uses its own schema pgboss_spike_test so its afterAll drop cannot affect other suites.
+  - Existing src/database/migrations.integration-spec.ts adjusted: the last migration is now the pg-boss one (new revert test) and the auth-tokens revert/re-apply tests undo two migrations.
+  - pg-boss Jest mapping extended to the unit project and test/jest-e2e.json (spike finding 1).
+  - The dev database still needs migration:run before the API/worker boot with the QueueModule (SI-03.8 / SI-03.12).
 
 ### SI-03.6 — Entidade Video, migration e identificador público
 - **Status:** pending
