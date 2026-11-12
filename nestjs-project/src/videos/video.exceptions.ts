@@ -127,11 +127,24 @@ export class UploadExpiredException extends VideoDomainException {
 }
 
 export class UploadPartsMismatchException extends VideoDomainException {
-  constructor(partNumbers: number[]) {
+  constructor(partNumbers: number[], storageCode?: string) {
     super(
       'UPLOAD_PARTS_MISMATCH',
       409,
-      `Parts do not match the stored upload: ${partNumbers.join(', ')}`,
+      `Parts do not match the stored upload: ${partNumbers.join(', ')}${
+        storageCode ? ` (storage: ${storageCode})` : ''
+      }`,
+    );
+  }
+}
+
+/** Manifest shape errors answer the standard validation envelope (400). */
+export class ManifestInvalidException extends VideoDomainException {
+  constructor(expectedPartCount: number) {
+    super(
+      'VALIDATION_ERROR',
+      400,
+      `parts must list exactly part numbers 1..${expectedPartCount} in ascending order`,
     );
   }
 }

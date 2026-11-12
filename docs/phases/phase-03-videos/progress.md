@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 9/17 completed
+**SIs:** 10/17 completed
 
 ## Required Technical Verification Gates
 
@@ -12,8 +12,8 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
 | 1 | TypeORM + pg-boss transactional integration (TD-05) | PASS — approved 2026-11-11 | docs/phases/phase-03-videos/spike-pgboss.md; src/queue/pgboss-spike.integration-spec.ts |
 | 2 | Pinned MinIO image, SHA-256, Compose, healthcheck, CORS (TD-03, TD-16) | PASS — evidence executed 2026-11-11 (minisign/ARM64 preserved as options, not exercised) | docs/phases/phase-03-videos/gate-02-minio.md |
 | 3 | 10 GiB upload end to end (TD-01, TD-08, TD-13) | PENDING | — |
-| 4 | Ambiguous completion: identity and integrity proof (TD-02) | PENDING | — |
-| 5 | Concurrent completions (TD-02, TD-09) | PENDING | — |
+| 4 | Ambiguous completion: identity and integrity proof (TD-02) | PASS — evidence executed 2026-11-12 on the pinned MinIO; awaiting human approval | docs/phases/phase-03-videos/gate-04-05-completion.md; src/videos/video-completion.service.integration-spec.ts |
+| 5 | Concurrent completions (TD-02, TD-09) | PASS — evidence executed 2026-11-12 (service level; HTTP mapping in SI-03.11); awaiting human approval | docs/phases/phase-03-videos/gate-04-05-completion.md |
 | 6 | Real media fixtures (TD-07, TD-15) | PENDING | — |
 | 7 | Presigned URL expiry and renewal (TD-11) | PENDING | — |
 | 8 | HTTP Range directly on MinIO (TD-11) | PENDING | — |
@@ -113,9 +113,14 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - openapi.json regenerated (part-urls, upload status, abort).
 
 ### SI-03.10 — Serviço de conclusão do upload (Verification Gates 4 e 5)
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 10 integration on pinned MinIO (video-completion.service.integration-spec.ts) + 6 integration (upload-recovery.service.integration-spec.ts) + 8 unit (completion-proof.spec.ts) + 6 unit (storage-errors.spec.ts); regression npm test 52 suites / 372, test:e2e 72 + 1 todo, tsc 0, eslint baseline
+- **Observations:**
+  - All 9 ACs verified with executed evidence; Gates 4 and 5 report in gate-04-05-completion.md.
+  - Final multipart ETag on the pinned MinIO is deterministic for the verified manifest; FINAL_ETAG_IS_DETERMINISTIC = true is now evidence-backed (additional check only, never a checksum).
+  - Fix in storage-errors.ts: the SDK re-throws a 200-with-<Error> as 503/server fault keeping the code, so InvalidPart was misclassified as ambiguous; definitive S3 codes are now matched before any status rule (new storage-errors.spec.ts).
+  - Recovery logic shared with the reconciler lives in UploadRecoveryService (resolve with allowRelease only for the reconciler); VideoCompletionService only runs the protocol.
+  - Fault injection is a real HTTP proxy (src/test/s3-fault-proxy.ts) in front of CompleteMultipartUpload only; the "storage unreachable" scenario uses a real client on a closed port.
 
 ### SI-03.11 — Endpoint POST /videos/:id/upload/complete
 - **Status:** pending

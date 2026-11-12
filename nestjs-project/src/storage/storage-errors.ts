@@ -47,6 +47,25 @@ const TRANSIENT_CODES = new Set([
   'ServerSideEncryptionConfigurationNotFoundError',
 ]);
 
+/**
+ * Coded rejections that mean "the operation did not take effect", whatever
+ * the HTTP status. The SDK re-throws an HTTP 200 with an `<Error>` body as a
+ * 503 server fault that keeps the code (verified on the pinned MinIO), so the
+ * code — not the status — decides.
+ */
+const DEFINITIVE_CODES = new Set([
+  'InvalidPart',
+  'InvalidPartOrder',
+  'EntityTooSmall',
+  'EntityTooLarge',
+  'MalformedXML',
+  'InvalidArgument',
+  'InvalidRequest',
+  'AccessDenied',
+  'NoSuchBucket',
+  'NoSuchKey',
+]);
+
 const NOT_SENT_NETWORK_CODES = new Set([
   'ECONNREFUSED',
   'ENOTFOUND',
@@ -85,6 +104,11 @@ export function classifyStorageError(error: unknown): StorageError {
   const message = error instanceof Error ? error.message : String(error);
 
   if (code === 'NoSuchUpload') return new UploadNotFoundError({ cause: error });
+  if (DEFINITIVE_CODES.has(code)) {
+    return new StorageRejectedError('definitive', code, message, {
+      cause: error,
+    });
+  }
 
   const net = networkCode(e);
   if (net && NOT_SENT_NETWORK_CODES.has(net)) {
