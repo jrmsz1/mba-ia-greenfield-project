@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 6/17 completed
+**SIs:** 7/17 completed
 
 ## Required Technical Verification Gates
 
@@ -81,9 +81,14 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - cleanAllTables deletes videos before channels (FK); migrations suite reverts videos, then pg-boss, then auth tokens.
 
 ### SI-03.7 — Política de acesso e serviço de início de upload
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 31 passing (unit 19: upload-admission, video-access.policy, video-upload.service; integration 12 on real PostgreSQL + MinIO); regression npm test and test:e2e green, tsc 0, eslint baseline
+- **Observations:**
+  - All 10 ACs covered, including concurrent owner starts (capacity for one: MAX_ACTIVE=1 and pending = one request), both 10 GiB requests admitted with defaults, lost CreateMultipartUpload response (orphan session aborted on retry, one session left), 3 concurrent retries (one creates, others 409 at once), storage down during investigation (reservation kept, nothing created), unlock not confirmed (connection discarded, next start locks).
+  - Phase 2 lock uses a dedicated pg.Client (never pooled, always closed in finally) instead of a pooled TypeORM QueryRunner: TypeORM releasePostgresConnection is private, and closing the dedicated connection releases the session lock by construction. Added @types/pg (dev dependency, types only).
+  - First multipart creation of a fresh reservation skips the key investigation: a session can only exist after an attempt, and every attempt writes multipart_create_attempted_at first.
+  - Filename sanitizer filters control characters by char code (no eslint-disable; project rule).
+  - Storage-failure branches are tested in integration with jest.spyOn on StorageService (compensation-logic rule); the unit spec covers the pre-database size check.
 
 ### SI-03.8 — Endpoints POST /videos e GET /videos/:id
 - **Status:** pending
