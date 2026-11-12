@@ -6,6 +6,7 @@ import { VerificationToken } from '../auth/entities/verification-token.entity';
 import { CreateUsersAndChannels1775687773260 } from './migrations/1775687773260-CreateUsersAndChannels';
 import { CreateAuthTokens1777579850478 } from './migrations/1777579850478-CreateAuthTokens';
 import { CreatePgBossSchema1794452175254 } from './migrations/1794452175254-CreatePgBossSchema';
+import { CreateVideos1794453245701 } from './migrations/1794453245701-CreateVideos';
 import {
   createTestDataSource,
   resetTestSchema,
@@ -21,6 +22,7 @@ const MANAGED_TABLES = [
 ];
 const TOKEN_TABLES = ['refresh_tokens', 'verification_tokens'];
 const TOKEN_ENUM = 'verification_tokens_type_enum';
+const VIDEO_ENUMS = ['video_publication', 'video_processing_status'];
 
 async function existingTables(
   dataSource: DataSource,
@@ -111,11 +113,26 @@ describe('Database migrations (integration)', () => {
     expect(await existingTables(ds(), MANAGED_TABLES)).toEqual(MANAGED_TABLES);
     expect(await enumExists(ds(), TOKEN_ENUM)).toBe(true);
     expect(await queueSchemaExists(ds())).toBe(true);
+    expect(await existingTables(ds(), ['videos'])).toEqual(['videos']);
+  });
+
+  it('should revert the videos migration, removing its table and ENUM types', async () => {
+    await ds().runMigrations({ transaction: 'each' });
+
+    await ds().undoLastMigration({ transaction: 'each' });
+
+    expect(await existingTables(ds(), ['videos'])).toEqual([]);
+    for (const name of VIDEO_ENUMS) {
+      expect(await enumExists(ds(), name)).toBe(false);
+    }
+    expect(await existingTables(ds(), MANAGED_TABLES)).toEqual(MANAGED_TABLES);
+    expect(await queueSchemaExists(ds())).toBe(true);
   });
 
   it('should revert the pg-boss migration, removing only the queue schema', async () => {
     await ds().runMigrations({ transaction: 'each' });
 
+    await ds().undoLastMigration({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
 
     expect(await queueSchemaExists(ds())).toBe(false);
@@ -129,6 +146,7 @@ describe('Database migrations (integration)', () => {
   it('should revert the auth tokens migration, removing its tables and ENUM type', async () => {
     await ds().runMigrations({ transaction: 'each' });
 
+    await ds().undoLastMigration({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
 
@@ -147,12 +165,14 @@ describe('Database migrations (integration)', () => {
     await ds().runMigrations({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
+    await ds().undoLastMigration({ transaction: 'each' });
 
     const ran = await ds().runMigrations({ transaction: 'each' });
 
     expect(ran.map((migration) => migration.name)).toEqual([
       CreateAuthTokens1777579850478.name,
       CreatePgBossSchema1794452175254.name,
+      CreateVideos1794453245701.name,
     ]);
     expect(await existingTables(ds(), MANAGED_TABLES)).toEqual(MANAGED_TABLES);
     expect(await queueSchemaExists(ds())).toBe(true);
