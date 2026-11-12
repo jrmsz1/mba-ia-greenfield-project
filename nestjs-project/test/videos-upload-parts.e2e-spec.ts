@@ -6,7 +6,10 @@ import { randomBytes } from 'node:crypto';
 import request from 'supertest';
 import { originalKey } from '../src/storage/storage-key';
 import { StorageUnavailableError } from '../src/storage/storage-errors';
-import { fetchPresigned } from '../src/test/test-storage';
+import {
+  fetchPresigned,
+  readTestStorageTarget,
+} from '../src/test/test-storage';
 import { Video } from '../src/videos/entities/video.entity';
 import {
   bodyField,
@@ -96,6 +99,12 @@ describe('videos-upload-parts', () => {
       expect(ttl).toBeGreaterThan(ctx.upload.partPresignTtlSeconds - 10);
       expect(ttl).toBeLessThanOrEqual(ctx.upload.partPresignTtlSeconds + 10);
       expect(new URL(part.url).host).toBe('localhost:9000');
+      // Signed by the API identity, never delivery or root (TD-04 rev).
+      const credential =
+        new URL(part.url).searchParams.get('X-Amz-Credential') ?? '';
+      expect(credential.split('/')[0]).toBe(
+        readTestStorageTarget().identities.api.accessKeyId,
+      );
     }
   });
 

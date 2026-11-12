@@ -18,13 +18,15 @@ const videoKeys = {
   S3_TEST_BUCKET: Joi.string()
     .pattern(TEST_RESOURCE_PATTERNS.S3_BUCKET)
     .default(D.S3_TEST_BUCKET),
+  // The process's own storage identity (API or worker), never the MinIO root
+  // user, which only the minio service and the provisioning container receive
+  // (phase-03-videos/TD-04, TD-16 revisions 2026-11-12). No fallback: the
+  // S3_TEST_* identities are mapped only by the test setup (src/test).
   S3_ACCESS_KEY_ID: Joi.string().required(),
   S3_SECRET_ACCESS_KEY: Joi.string().required(),
   S3_FORCE_PATH_STYLE: Joi.string()
     .valid('true', 'false')
     .default(D.S3_FORCE_PATH_STYLE),
-  MINIO_ROOT_USER: Joi.string().required(),
-  MINIO_ROOT_PASSWORD: Joi.string().required(),
   MINIO_API_CORS_ALLOW_ORIGIN: Joi.string().default(
     D.MINIO_API_CORS_ALLOW_ORIGIN,
   ),
@@ -99,7 +101,7 @@ function crossKeyRules(
   return env;
 }
 
-export const envValidationSchema = Joi.object({
+const baseEnvKeys = {
   NODE_ENV: Joi.string()
     .valid('development', 'production', 'test')
     .default('development'),
@@ -121,4 +123,42 @@ export const envValidationSchema = Joi.object({
   MAIL_FROM: Joi.string().default('"StreamTube" <noreply@streamtube.com>'),
   SWAGGER_ENABLED: Joi.string().valid('true', 'false').default('false'),
   ...videoKeys,
+};
+
+/**
+ * The API also holds the read-only delivery identity that signs playback and
+ * download URLs (phase-03-videos/TD-04 revision 2026-11-12): both halves are
+ * required and the identity must differ from the API's own.
+ */
+function distinctDeliveryIdentity(
+  env: Record<string, string>,
+  helpers: Joi.CustomHelpers,
+): Record<string, string> | Joi.ErrorReport {
+  if (env.S3_DELIVERY_ACCESS_KEY_ID === env.S3_ACCESS_KEY_ID) {
+    return helpers.error('any.custom', {
+      error: new Error(
+        'S3_DELIVERY_ACCESS_KEY_ID must differ from S3_ACCESS_KEY_ID (separate delivery identity)',
+      ),
+    });
+  }
+  return env;
+}
+
+/** HTTP API process (AppModule). */
+export const envValidationSchema = Joi.object({
+  ...baseEnvKeys,
+  S3_DELIVERY_ACCESS_KEY_ID: Joi.string().required(),
+  S3_DELIVERY_SECRET_ACCESS_KEY: Joi.string().required(),
+})
+  .custom(crossKeyRules, 'phase 03 cross-key rules')
+  .custom(distinctDeliveryIdentity, 'separate delivery identity');
+
+/**
+ * Video worker process (WorkerModule): it signs no client URL, so it must not
+ * receive the delivery identity (phase-03-videos/TD-16 revision 2026-11-12).
+ */
+export const workerEnvValidationSchema = Joi.object({
+  ...baseEnvKeys,
+  S3_DELIVERY_ACCESS_KEY_ID: Joi.forbidden(),
+  S3_DELIVERY_SECRET_ACCESS_KEY: Joi.forbidden(),
 }).custom(crossKeyRules, 'phase 03 cross-key rules');

@@ -10,6 +10,8 @@ const PHASE_03_KEYS = [
   'S3_FORCE_PATH_STYLE',
   'S3_ACCESS_KEY_ID',
   'S3_SECRET_ACCESS_KEY',
+  'S3_DELIVERY_ACCESS_KEY_ID',
+  'S3_DELIVERY_SECRET_ACCESS_KEY',
   'MAX_UPLOAD_BYTES',
   'UPLOAD_PART_SIZE_BYTES',
   'PLAYBACK_PRESIGN_TTL_SECONDS',
@@ -63,6 +65,8 @@ describe('phase 03 config factories', () => {
     process.env.S3_FORCE_PATH_STYLE = 'false';
     process.env.S3_ACCESS_KEY_ID = 'key';
     process.env.S3_SECRET_ACCESS_KEY = 'secret';
+    process.env.S3_DELIVERY_ACCESS_KEY_ID = 'delivery-key';
+    process.env.S3_DELIVERY_SECRET_ACCESS_KEY = 'delivery-secret';
     process.env.MAX_UPLOAD_BYTES = '1048576';
     process.env.WORKER_JOB_TIMEOUT_SECONDS = '60';
     process.env.PGBOSS_SCHEMA = 'queue_jobs';
@@ -71,6 +75,8 @@ describe('phase 03 config factories', () => {
       forcePathStyle: false,
       accessKeyId: 'key',
       secretAccessKey: 'secret',
+      deliveryAccessKeyId: 'delivery-key',
+      deliverySecretAccessKey: 'delivery-secret',
     });
     expect(uploadConfig().maxUploadBytes).toBe(1_048_576);
     expect(workerConfig().jobTimeoutSeconds).toBe(60);

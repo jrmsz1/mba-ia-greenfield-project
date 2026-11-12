@@ -4,15 +4,18 @@ import { RefreshToken } from '../auth/entities/refresh-token.entity';
 import { VerificationToken } from '../auth/entities/verification-token.entity';
 import { Channel } from '../channels/entities/channel.entity';
 import uploadConfig from '../config/upload.config';
-import { BucketBootstrapService } from '../storage/bucket-bootstrap.service';
-import { buildS3Clients, type S3Clients } from '../storage/s3-clients.provider';
+import {
+  buildS3Clients,
+  destroyS3Clients,
+  type S3Clients,
+} from '../storage/s3-clients.provider';
 import { StorageService } from '../storage/storage.service';
 import {
   cleanAllTables,
   createTestDataSource,
 } from '../test/create-test-data-source';
 import {
-  emptyTestBucket,
+  verifyTestBucket,
   fetchPresigned,
   testStorageConfig,
 } from '../test/test-storage';
@@ -41,9 +44,7 @@ describe('VideoUploadPartsService (real PostgreSQL + MinIO)', () => {
     const config = testStorageConfig();
     clients = buildS3Clients(config);
     storage = new StorageService(clients, config);
-    await new BucketBootstrapService(clients, config).ensureBucket(
-      config.bucket,
-    );
+    await verifyTestBucket(clients.internal, config.bucket);
     const upload = { ...uploadConfig(), partSizeBytes: 5 * MIB };
     uploads = new VideoUploadService(dataSource, storage, upload);
     parts = new VideoUploadPartsService(dataSource, storage, upload);
@@ -51,14 +52,11 @@ describe('VideoUploadPartsService (real PostgreSQL + MinIO)', () => {
 
   afterAll(async () => {
     await dataSource.destroy();
-    clients.internal.destroy();
-    clients.singleAttempt.destroy();
-    clients.publicSigner.destroy();
+    destroyS3Clients(clients);
   });
 
   beforeEach(async () => {
     await cleanAllTables(dataSource);
-    await emptyTestBucket(clients.internal, storage.bucket);
     owner = await createTestOwner(dataSource);
   });
 

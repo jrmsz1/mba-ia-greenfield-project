@@ -27,7 +27,7 @@ import { MediaModule } from '../media/media.module';
 import { runTool } from '../media/process-runner';
 import { PGBOSS, QUEUES, VIDEO_PROCESS_RETRY } from '../queue/queue.constants';
 import { QueueModule } from '../queue/queue.module';
-import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { UPLOAD_BINDING_METADATA_KEY } from '../storage/storage.constants';
 import { originalKey, thumbnailKey } from '../storage/storage-key';
 import { StorageModule } from '../storage/storage.module';
@@ -37,8 +37,13 @@ import {
   createTestTypeOrmModule,
 } from '../test/create-test-data-source';
 import { testQueueSchema } from '../test/test-queue';
-import { emptyTestBucket, testStorageConfig } from '../test/test-storage';
-import { buildS3Clients, type S3Clients } from '../storage/s3-clients.provider';
+import { S3_CLIENTS } from '../storage/storage.constants';
+import { testStorageConfig, verifyTestBucket } from '../test/test-storage';
+import {
+  buildS3Clients,
+  destroyS3Clients,
+  type S3Clients,
+} from '../storage/s3-clients.provider';
 import {
   buildVideoValues,
   createTestOwner,
@@ -69,6 +74,21 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
   let fixtures: string;
   let logs: string[];
   let s3: S3Clients;
+  let workerClients: S3Clients;
+
+  /**
+   * Size of this test's thumbnail, or null when absent. No operational
+   * identity may read thumbnails (TD-04), so existence is observed by key
+   * listing (`s3:ListBucket`), restricted to this video's exact key.
+   */
+  const thumbnailSize = async (id: string): Promise<number | null> => {
+    const key = thumbnailKey(id);
+    const page = await s3.internal.send(
+      new ListObjectsV2Command({ Bucket: storage.bucket, Prefix: key }),
+    );
+    const match = (page.Contents ?? []).find((o) => o.Key === key);
+    return match ? (match.Size ?? 0) : null;
+  };
 
   const row = async (id: string) =>
     await dataSource.getRepository(Video).findOneByOrFail({ id });
@@ -164,6 +184,10 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
     );
     expect(gen.code).toBe(0);
 
+    // The worker under test runs with the restricted test WORKER identity (as
+    // in production); fixtures are written as originals by the test API
+    // identity (`s3`), the only one allowed to write them (TD-04).
+    workerClients = buildS3Clients(testStorageConfig('worker'));
     const moduleRef = await Test.createTestingModule({
       imports: [
         ConfigModule.forRoot({
@@ -176,7 +200,10 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
         QueueModule.register({ role: 'worker' }),
       ],
       providers: [VideoProcessingWorker],
-    }).compile();
+    })
+      .overrideProvider(S3_CLIENTS)
+      .useValue(workerClients)
+      .compile();
     app = moduleRef.createNestApplication();
     await app.init(); // boss.start
     await app.get(VideoProcessingWorker).start(); // work() registration, as main.worker.ts
@@ -184,14 +211,14 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
     boss = app.get<PgBoss>(PGBOSS);
     storage = app.get(StorageService);
     probe = app.get(FfprobeRunner);
-    s3 = buildS3Clients(testStorageConfig());
+    s3 = buildS3Clients(testStorageConfig('api'));
+    await verifyTestBucket(s3.internal, storage.bucket);
   });
 
   afterAll(async () => {
     await app.close();
-    s3.internal.destroy();
-    s3.singleAttempt.destroy();
-    s3.publicSigner.destroy();
+    destroyS3Clients(s3);
+    destroyS3Clients(workerClients);
     await rm(fixtures, { recursive: true, force: true });
   });
 
@@ -210,7 +237,6 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
     }
     await cleanAllTables(dataSource);
     await boss.deleteAllJobs(QUEUES.VIDEO_PROCESS);
-    await emptyTestBucket(s3.internal, storage.bucket);
     owner = await createTestOwner(dataSource);
   });
 
@@ -238,8 +264,7 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
       audio: { codec_name: 'aac' },
     });
     expect(video.thumbnail_generated_at).toBeInstanceOf(Date);
-    const thumb = await storage.headObject(thumbnailKey(id));
-    expect(thumb?.contentLength).toBeGreaterThan(0);
+    expect(await thumbnailSize(id)).toBeGreaterThan(0);
     const [job] = await waitJobsCompleted(id, 1);
     expect(job.data).toEqual({ videoId: id });
   });
@@ -340,7 +365,7 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
     });
     // The stale attempt never writes (or overwrites) the thumbnail.
     expect(put).not.toHaveBeenCalled();
-    expect(await storage.headObject(thumbnailKey(id))).toBeNull();
+    expect(await thumbnailSize(id)).toBeNull();
     expect(logs.some((l) => l.includes('processing_superseded'))).toBe(true);
   });
 

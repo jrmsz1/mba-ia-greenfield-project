@@ -20,11 +20,12 @@ import { StorageService } from '../../src/storage/storage.service';
 import { cleanAllTables } from '../../src/test/create-test-data-source';
 import {
   buildS3Clients,
+  destroyS3Clients,
   type S3Clients,
 } from '../../src/storage/s3-clients.provider';
 import {
-  emptyTestBucket,
   testStorageConfig,
+  verifyTestBucket,
 } from '../../src/test/test-storage';
 import { User } from '../../src/users/entities/user.entity';
 
@@ -37,7 +38,10 @@ export interface VideosE2e {
   /** Live upload config object: tests may tune limits and must restore them. */
   upload: ConfigType<typeof uploadConfig>;
   throttler: ThrottlerStorageService;
-  /** Direct S3 clients on the test bucket, for assertions and cleanup. */
+  /**
+   * Direct S3 clients on the test bucket with the restricted test API
+   * identity, for assertions on the test's own keys (never bucket cleanup).
+   */
   s3: S3Clients;
 }
 
@@ -71,20 +75,25 @@ export async function createVideosApp(
   // instead of opening one listener per request (concurrent requests would
   // otherwise race and reset connections).
   await app.listen(0);
+  const s3 = buildS3Clients(testStorageConfig());
+  await verifyTestBucket(s3.internal, testStorageConfig().bucket);
   return {
     app,
     dataSource: moduleRef.get(DataSource),
     storage: moduleRef.get(StorageService),
     upload: moduleRef.get<ConfigType<typeof uploadConfig>>(uploadConfig.KEY),
     throttler: moduleRef.get<ThrottlerStorageService>(ThrottlerStorage),
-    s3: buildS3Clients(testStorageConfig()),
+    s3,
   };
 }
 
-/** Clean tables, test bucket and auth throttling state between tests. */
+/**
+ * Clean tables and auth throttling state between tests. Storage is never
+ * emptied here: each test asserts only the keys of the videos it creates
+ * (phase-03-videos/TD-15 revisions of 2026-11-12).
+ */
 export async function resetVideosState(ctx: VideosE2e): Promise<void> {
   await cleanAllTables(ctx.dataSource);
-  await emptyTestBucket(ctx.s3.internal, ctx.storage.bucket);
   ctx.throttler.storage.clear();
 }
 
@@ -132,7 +141,5 @@ export function bodyField(res: { body: unknown }, key: string): unknown {
 
 export async function closeVideosApp(ctx: VideosE2e): Promise<void> {
   await ctx.app.close();
-  ctx.s3.internal.destroy();
-  ctx.s3.singleAttempt.destroy();
-  ctx.s3.publicSigner.destroy();
+  destroyS3Clients(ctx.s3);
 }

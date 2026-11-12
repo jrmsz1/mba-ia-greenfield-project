@@ -62,15 +62,21 @@ describe('videos-delivery-urls', () => {
   };
 
   /**
-   * AC #1 (revised 2026-11-12): no secret key, admin token or other permanent
-   * secret anywhere in the response; S3_ACCESS_KEY_ID only inside the
-   * X-Amz-Credential parameter of the presigned URL (AWS SigV4).
+   * AC #1 (revised 2026-11-12; SI-03.16 R-AC1): no secret key, admin token or
+   * other permanent secret anywhere in the response. The only credential
+   * identifier is the read-only DELIVERY identity's key ID, inside
+   * X-Amz-Credential (AWS SigV4); the API identity's key ID never appears.
    */
   const expectNoPermanentCredentials = (res: {
     text: string;
     body: unknown;
   }): void => {
-    const { accessKeyId, secretAccessKey } = storageConfig();
+    const {
+      accessKeyId,
+      secretAccessKey,
+      deliveryAccessKeyId,
+      deliverySecretAccessKey,
+    } = storageConfig();
     const rootPassword = process.env.MINIO_ROOT_PASSWORD ?? '';
     // Exactly these two properties; expires_at is a plain ISO date.
     expect(Object.keys(res.body as object).sort()).toEqual([
@@ -80,17 +86,23 @@ describe('videos-delivery-urls', () => {
     const expiresAt = bodyField(res, 'expires_at') as string;
     expect(new Date(expiresAt).toISOString()).toBe(expiresAt);
     expect(secretAccessKey.length).toBeGreaterThan(0);
+    expect(deliverySecretAccessKey.length).toBeGreaterThan(0);
+    expect(deliveryAccessKeyId).not.toBe(accessKeyId);
     expect(res.text).not.toContain(secretAccessKey);
+    expect(res.text).not.toContain(deliverySecretAccessKey);
     if (rootPassword) expect(res.text).not.toContain(rootPassword);
     expect(res.text).not.toContain(owner.token);
     expect(res.text).not.toMatch(/X-Amz-Security-Token/i);
+    expect(res.text).not.toContain(accessKeyId);
     const url = new URL(bodyField(res, 'url') as string);
     expect(
-      url.searchParams.get('X-Amz-Credential')?.startsWith(`${accessKeyId}/`),
+      url.searchParams
+        .get('X-Amz-Credential')
+        ?.startsWith(`${deliveryAccessKeyId}/`),
     ).toBe(true);
     expect(
       res.text.replace(/X-Amz-Credential=[^&"]+/, 'X-Amz-Credential=…'),
-    ).not.toContain(accessKeyId);
+    ).not.toContain(deliveryAccessKeyId);
   };
 
   beforeAll(async () => {

@@ -4,7 +4,11 @@ import { RefreshToken } from '../auth/entities/refresh-token.entity';
 import { VerificationToken } from '../auth/entities/verification-token.entity';
 import { Channel } from '../channels/entities/channel.entity';
 import uploadConfig from '../config/upload.config';
-import { buildS3Clients, type S3Clients } from '../storage/s3-clients.provider';
+import {
+  buildS3Clients,
+  destroyS3Clients,
+  type S3Clients,
+} from '../storage/s3-clients.provider';
 import {
   StorageRejectedError,
   StorageUnavailableError,
@@ -15,10 +19,9 @@ import {
   cleanAllTables,
   createTestDataSource,
 } from '../test/create-test-data-source';
-import { emptyTestBucket, testStorageConfig } from '../test/test-storage';
+import { verifyTestBucket, testStorageConfig } from '../test/test-storage';
 import { createTestOwner, type TestOwner } from '../test/video-fixtures';
 import { User } from '../users/entities/user.entity';
-import { BucketBootstrapService } from '../storage/bucket-bootstrap.service';
 import { Video } from './entities/video.entity';
 import { sessionLockOps } from './video-session-lock';
 import { VideoUploadService } from './video-upload.service';
@@ -70,22 +73,17 @@ describe('VideoUploadService.start (real PostgreSQL + MinIO)', () => {
     const config = testStorageConfig();
     clients = buildS3Clients(config);
     storage = new StorageService(clients, config);
-    await new BucketBootstrapService(clients, config).ensureBucket(
-      config.bucket,
-    );
+    await verifyTestBucket(clients.internal, config.bucket);
   });
 
   afterAll(async () => {
     await dataSource.destroy();
-    clients.internal.destroy();
-    clients.singleAttempt.destroy();
-    clients.publicSigner.destroy();
+    destroyS3Clients(clients);
   });
 
   beforeEach(async () => {
     jest.restoreAllMocks();
     await cleanAllTables(dataSource);
-    await emptyTestBucket(clients.internal, storage.bucket);
     owner = await createTestOwner(dataSource);
   });
 

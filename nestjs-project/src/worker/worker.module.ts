@@ -18,7 +18,7 @@ export const workerDatabaseModule = rootTypeOrmModule();
  */
 @Module({
   imports: [
-    rootConfigModule(),
+    rootConfigModule('worker'),
     workerDatabaseModule,
     StorageModule,
     MediaModule,

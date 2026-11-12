@@ -10,6 +10,7 @@ import request from 'supertest';
 import { PGBOSS, QUEUES } from '../src/queue/queue.constants';
 import {
   buildS3Clients,
+  destroyS3Clients,
   type S3Clients,
 } from '../src/storage/s3-clients.provider';
 import { originalKey } from '../src/storage/storage-key';
@@ -125,7 +126,8 @@ describe('videos-upload-complete', () => {
     appClients = { ...direct, singleAttempt: viaProxy.singleAttempt };
     // The unused clients are released right away.
     viaProxy.internal.destroy();
-    viaProxy.publicSigner.destroy();
+    viaProxy.partSigner.destroy();
+    viaProxy.deliverySigner?.destroy();
     ctx = await createVideosApp({ s3Clients: appClients });
     boss = ctx.app.get<PgBoss>(PGBOSS);
     defaultPartSize = ctx.upload.partSizeBytes;
@@ -134,13 +136,7 @@ describe('videos-upload-complete', () => {
   afterAll(async () => {
     ctx.upload.partSizeBytes = defaultPartSize;
     await closeVideosApp(ctx);
-    for (const c of [
-      appClients.internal,
-      appClients.singleAttempt,
-      appClients.publicSigner,
-    ]) {
-      c.destroy();
-    }
+    destroyS3Clients(appClients);
     await proxy.close();
   });
 

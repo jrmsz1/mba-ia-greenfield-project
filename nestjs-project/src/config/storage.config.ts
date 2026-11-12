@@ -11,4 +11,7 @@ export default registerAs('storage', () => ({
   forcePathStyle: envString('S3_FORCE_PATH_STYLE') === 'true',
   accessKeyId: process.env.S3_ACCESS_KEY_ID ?? '',
   secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? '',
+  // Read-only delivery identity (API only; absent in the worker), TD-04 rev.
+  deliveryAccessKeyId: process.env.S3_DELIVERY_ACCESS_KEY_ID ?? '',
+  deliverySecretAccessKey: process.env.S3_DELIVERY_SECRET_ACCESS_KEY ?? '',
 }));

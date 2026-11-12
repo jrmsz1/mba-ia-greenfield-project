@@ -8,8 +8,8 @@ const requiredEnv = {
   JWT_REFRESH_SECRET: 'refresh-secret',
   S3_ACCESS_KEY_ID: 'access-key',
   S3_SECRET_ACCESS_KEY: 'secret-key',
-  MINIO_ROOT_USER: 'minio-user',
-  MINIO_ROOT_PASSWORD: 'minio-password',
+  S3_DELIVERY_ACCESS_KEY_ID: 'delivery-key',
+  S3_DELIVERY_SECRET_ACCESS_KEY: 'delivery-secret',
 };
 
 const validate = (env: Record<string, string>) =>

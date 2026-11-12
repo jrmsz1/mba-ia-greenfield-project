@@ -22,8 +22,11 @@ import workerConfig from '../config/worker.config';
 import { JobPublisherService } from '../queue/job-publisher.service';
 import { PGBOSS, QUEUES } from '../queue/queue.constants';
 import { QueueModule } from '../queue/queue.module';
-import { BucketBootstrapService } from '../storage/bucket-bootstrap.service';
-import { buildS3Clients, type S3Clients } from '../storage/s3-clients.provider';
+import {
+  buildS3Clients,
+  destroyS3Clients,
+  type S3Clients,
+} from '../storage/s3-clients.provider';
 import { originalKey } from '../storage/storage-key';
 import { StorageUnavailableError } from '../storage/storage-errors';
 import { StorageService, type ManifestPart } from '../storage/storage.service';
@@ -32,7 +35,7 @@ import {
   createTestTypeOrmModule,
 } from '../test/create-test-data-source';
 import { startS3FaultProxy, type S3FaultProxy } from '../test/s3-fault-proxy';
-import { emptyTestBucket, testStorageConfig } from '../test/test-storage';
+import { verifyTestBucket, testStorageConfig } from '../test/test-storage';
 import { createTestOwner, type TestOwner } from '../test/video-fixtures';
 import { User } from '../users/entities/user.entity';
 import { expectedMultipartEtag } from './completion-proof';
@@ -90,9 +93,7 @@ describe('VideoCompletionService (pinned MinIO + PostgreSQL)', () => {
       { ...direct, singleAttempt: viaProxy.singleAttempt },
       config,
     );
-    await new BucketBootstrapService(direct, config).ensureBucket(
-      config.bucket,
-    );
+    await verifyTestBucket(direct.internal, config.bucket);
 
     const upload = { ...uploadConfig(), partSizeBytes: 5 * MIB };
     uploads = new VideoUploadService(dataSource, storage, upload);
@@ -108,16 +109,13 @@ describe('VideoCompletionService (pinned MinIO + PostgreSQL)', () => {
     await app.close();
     await proxy.close();
     for (const c of [direct, viaProxy]) {
-      c.internal.destroy();
-      c.singleAttempt.destroy();
-      c.publicSigner.destroy();
+      destroyS3Clients(c);
     }
   });
 
   beforeEach(async () => {
     jest.restoreAllMocks();
     await cleanAllTables(dataSource);
-    await emptyTestBucket(direct.internal, storage.bucket);
     await boss.deleteAllJobs(QUEUES.VIDEO_PROCESS);
     owner = await createTestOwner(dataSource);
   });
@@ -412,9 +410,7 @@ describe('VideoCompletionService (pinned MinIO + PostgreSQL)', () => {
         StorageUnavailableException,
       );
     } finally {
-      dead.internal.destroy();
-      dead.singleAttempt.destroy();
-      dead.publicSigner.destroy();
+      destroyS3Clients(dead);
     }
     expect((await row(video.id)).processing_status).toBe('uploading');
   });

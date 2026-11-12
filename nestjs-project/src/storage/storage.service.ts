@@ -227,7 +227,7 @@ export class StorageService {
     );
   }
 
-  /** Part URL signed for the public endpoint (TD-01, TD-04). */
+  /** Part URL signed for the public endpoint by the API identity (TD-01, TD-04). */
   async presignUploadPart(
     key: string,
     uploadId: string,
@@ -235,7 +235,7 @@ export class StorageService {
     ttlSeconds: number,
   ): Promise<string> {
     return await getSignedUrl(
-      this.clients.publicSigner,
+      this.clients.partSigner,
       new UploadPartCommand({
         Bucket: this.bucket,
         Key: key,
@@ -246,14 +246,24 @@ export class StorageService {
     );
   }
 
-  /** GET signed for the public endpoint, optionally forcing a download name (TD-11). */
+  /**
+   * GET signed for the public endpoint by the read-only delivery identity,
+   * optionally forcing a download name (TD-11; TD-04 revision 2026-11-12).
+   * A process without the delivery identity (the worker) cannot sign one.
+   */
   async presignGet(
     key: string,
     ttlSeconds: number,
     options: { contentDisposition?: string } = {},
   ): Promise<string> {
+    const signer = this.clients.deliverySigner;
+    if (!signer) {
+      throw new Error(
+        'Delivery URLs require the delivery identity (S3_DELIVERY_ACCESS_KEY_ID), which this process does not hold',
+      );
+    }
     return await getSignedUrl(
-      this.clients.publicSigner,
+      signer,
       new GetObjectCommand({
         Bucket: this.bucket,
         Key: key,

@@ -23,8 +23,11 @@ import workerConfig from '../config/worker.config';
 import { JobPublisherService } from '../queue/job-publisher.service';
 import { PGBOSS, QUEUES, RECONCILE_CRON } from '../queue/queue.constants';
 import { QueueModule } from '../queue/queue.module';
-import { BucketBootstrapService } from '../storage/bucket-bootstrap.service';
-import { buildS3Clients, type S3Clients } from '../storage/s3-clients.provider';
+import {
+  buildS3Clients,
+  destroyS3Clients,
+  type S3Clients,
+} from '../storage/s3-clients.provider';
 import { UploadNotFoundError } from '../storage/storage-errors';
 import { UPLOAD_BINDING_METADATA_KEY } from '../storage/storage.constants';
 import { originalKey } from '../storage/storage-key';
@@ -34,7 +37,7 @@ import {
   createTestTypeOrmModule,
 } from '../test/create-test-data-source';
 import { startS3FaultProxy } from '../test/s3-fault-proxy';
-import { emptyTestBucket, testStorageConfig } from '../test/test-storage';
+import { verifyTestBucket, testStorageConfig } from '../test/test-storage';
 import {
   buildVideoValues,
   createTestOwner,
@@ -59,6 +62,8 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
   let dataSource: DataSource;
   let boss: PgBoss;
   let storage: StorageService;
+  let reconcilerStorage: StorageService;
+  let workerS3: S3Clients;
   let s3: S3Clients;
   let upload: ConfigType<typeof uploadConfig>;
   let uploads: VideoUploadService;
@@ -125,7 +130,7 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
     const closed = await startS3FaultProxy(testStorageConfig().endpoint);
     const endpoint = closed.endpoint;
     await closed.close();
-    const config = { ...testStorageConfig(), endpoint };
+    const config = { ...testStorageConfig('worker'), endpoint };
     const dead = buildS3Clients(config);
     const deadStorage = new StorageService(dead, config);
     const publisher = app.get(JobPublisherService);
@@ -140,9 +145,7 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
         app.get(queueConfig.KEY),
       ),
       close: () => {
-        dead.internal.destroy();
-        dead.singleAttempt.destroy();
-        dead.publicSigner.destroy();
+        destroyS3Clients(dead);
       },
     };
   };
@@ -172,20 +175,26 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
     upload.partSizeBytes = 5 * MIB;
     upload.completingStaleMinutes = 1;
 
-    const config = testStorageConfig();
+    // Fixtures (uploads, parts, objects) and assertions use the restricted
+    // test API identity; the reconciler under test runs with the test WORKER
+    // identity, as in production (phase-03-videos/TD-04 revision 2026-11-12).
+    const config = testStorageConfig('api');
     s3 = buildS3Clients(config);
     storage = new StorageService(s3, config);
-    await new BucketBootstrapService(s3, config).ensureBucket(config.bucket);
+    await verifyTestBucket(s3.internal, config.bucket);
+    const workerStorageConfig = testStorageConfig('worker');
+    workerS3 = buildS3Clients(workerStorageConfig);
+    reconcilerStorage = new StorageService(workerS3, workerStorageConfig);
     uploads = new VideoUploadService(dataSource, storage, upload);
     recovery = new UploadRecoveryService(
       dataSource,
-      storage,
+      reconcilerStorage,
       app.get(JobPublisherService),
     );
     reconciler = new VideoReconcilerWorker(
       boss,
       dataSource,
-      storage,
+      reconcilerStorage,
       recovery,
       app.get(JobPublisherService),
       upload,
@@ -195,14 +204,12 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
 
   afterAll(async () => {
     await app.close();
-    s3.internal.destroy();
-    s3.singleAttempt.destroy();
-    s3.publicSigner.destroy();
+    destroyS3Clients(s3);
+    destroyS3Clients(workerS3);
   });
 
   beforeEach(async () => {
     await cleanAllTables(dataSource);
-    await emptyTestBucket(s3.internal, storage.bucket);
     await boss.deleteAllJobs(QUEUES.VIDEO_PROCESS);
     owner = await createTestOwner(dataSource);
   });
@@ -213,7 +220,9 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
       'deleteObject',
       'headObject',
     ] as const) {
-      const fn = storage[method] as unknown as { mockRestore?: () => void };
+      const fn = reconcilerStorage[method] as unknown as {
+        mockRestore?: () => void;
+      };
       fn.mockRestore?.();
     }
   });
@@ -236,7 +245,7 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
     await expire(video.id);
     // First abort "loses the race" with a part in transit: the session survives.
     const abort = jest
-      .spyOn(storage, 'abortMultipartUpload')
+      .spyOn(reconcilerStorage, 'abortMultipartUpload')
       .mockResolvedValueOnce(undefined);
 
     await reconciler.runOnce(FAST);
@@ -275,7 +284,7 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
         }),
       );
       await expire(video.id);
-      const del = jest.spyOn(storage, 'deleteObject');
+      const del = jest.spyOn(reconcilerStorage, 'deleteObject');
 
       const report = await reconciler.runOnce(FAST);
 
@@ -455,9 +464,9 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
       await expire(video.id);
       // Every abort is lost: the session stays open through the whole run.
       const abort = jest
-        .spyOn(storage, 'abortMultipartUpload')
+        .spyOn(reconcilerStorage, 'abortMultipartUpload')
         .mockResolvedValue(undefined);
-      const del = jest.spyOn(storage, 'deleteObject');
+      const del = jest.spyOn(reconcilerStorage, 'deleteObject');
 
       const first = await reconciler.runOnce(FAST);
 
@@ -500,7 +509,7 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
       `UPDATE "videos" SET "processing_status" = 'completing', "completing_since" = now() - interval '10 minutes' WHERE id = $1`,
       [video.id],
     );
-    const del = jest.spyOn(storage, 'deleteObject');
+    const del = jest.spyOn(reconcilerStorage, 'deleteObject');
 
     const report = await reconciler.runOnce(FAST);
 

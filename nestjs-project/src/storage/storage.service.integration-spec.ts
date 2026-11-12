@@ -1,6 +1,5 @@
 import {
   AbortMultipartUploadCommand,
-  DeleteBucketCommand,
   HeadBucketCommand,
   ListMultipartUploadsCommand,
   UploadPartCommand,
@@ -10,14 +9,22 @@ import { createServer, type Server, type Socket } from 'node:net';
 import type { ConfigType } from '@nestjs/config';
 import type storageConfig from '../config/storage.config';
 import {
-  emptyTestBucket,
   fetchPresigned,
+  readTestStorageTarget,
   testStorageConfig,
   TestStorageGuardError,
+  verifyTestBucket,
 } from '../test/test-storage';
-import { BucketBootstrapService } from './bucket-bootstrap.service';
+import {
+  BucketUnavailableError,
+  BucketVerificationService,
+} from './bucket-verification.service';
 import { confirmUploadsGone } from './multipart-cleanup';
-import { buildS3Clients, type S3Clients } from './s3-clients.provider';
+import {
+  buildS3Clients,
+  destroyS3Clients,
+  type S3Clients,
+} from './s3-clients.provider';
 import { StorageUnavailableError, UploadNotFoundError } from './storage-errors';
 import { originalKey } from './storage-key';
 import { STORAGE_TIMEOUTS } from './storage.constants';
@@ -31,21 +38,38 @@ describe('StorageService against the pinned MinIO', () => {
   let config: ConfigType<typeof storageConfig>;
   let clients: S3Clients;
   let storage: StorageService;
-  let bootstrap: BucketBootstrapService;
+  /** Keys created by the running test: the only sessions it may abort. */
+  const ownKeys = new Set<string>();
 
-  async function abortAllUploads(): Promise<void> {
-    const page = await clients.internal.send(
-      new ListMultipartUploadsCommand({ Bucket: config.bucket }),
-    );
-    for (const upload of page.Uploads ?? []) {
-      await clients.internal.send(
-        new AbortMultipartUploadCommand({
-          Bucket: config.bucket,
-          Key: upload.Key,
-          UploadId: upload.UploadId,
-        }),
+  /** A fresh, exclusive key for this test (no bucket-wide assumption). */
+  function newKey(): string {
+    const key = originalKey(randomUUID());
+    ownKeys.add(key);
+    return key;
+  }
+
+  /**
+   * Aborts only the sessions this test opened on its own keys; objects and
+   * other tests' sessions are left alone (cleanup is the external maintenance
+   * container's, phase-03-videos/TD-15 revisions of 2026-11-12).
+   */
+  async function abortOwnUploads(): Promise<void> {
+    for (const key of ownKeys) {
+      const page = await clients.internal.send(
+        new ListMultipartUploadsCommand({ Bucket: config.bucket, Prefix: key }),
       );
+      for (const upload of page.Uploads ?? []) {
+        if (upload.Key !== key) continue;
+        await clients.internal.send(
+          new AbortMultipartUploadCommand({
+            Bucket: config.bucket,
+            Key: upload.Key,
+            UploadId: upload.UploadId,
+          }),
+        );
+      }
     }
+    ownKeys.clear();
   }
 
   async function uploadPart(
@@ -70,35 +94,72 @@ describe('StorageService against the pinned MinIO', () => {
     config = testStorageConfig();
     clients = buildS3Clients(config);
     storage = new StorageService(clients, config);
-    bootstrap = new BucketBootstrapService(clients, config);
-    await bootstrap.ensureBucket(config.bucket);
+    await verifyTestBucket(clients.internal, config.bucket);
   });
 
   afterEach(async () => {
-    await abortAllUploads();
-    await emptyTestBucket(clients.internal, config.bucket);
+    await abortOwnUploads();
   });
 
   afterAll(() => {
-    clients.internal.destroy();
-    clients.singleAttempt.destroy();
-    clients.publicSigner.destroy();
+    destroyS3Clients(clients);
   });
 
-  it('creates a missing bucket at startup', async () => {
-    const bucket = `bootstrap-${randomBytes(4).toString('hex')}-test`;
-    const scoped = new BucketBootstrapService(clients, { ...config, bucket });
+  describe('bucket verification at startup (HeadBucket only)', () => {
+    it('accepts the provisioned bucket', async () => {
+      const verifier = new BucketVerificationService(clients, config);
 
-    await scoped.onApplicationBootstrap();
+      await expect(verifier.onApplicationBootstrap()).resolves.toBeUndefined();
+    });
 
-    await expect(
-      clients.internal.send(new HeadBucketCommand({ Bucket: bucket })),
-    ).resolves.toBeDefined();
-    await clients.internal.send(new DeleteBucketCommand({ Bucket: bucket }));
+    it('fails fast naming a missing bucket and never creates it', async () => {
+      const bucket = `absent-${randomBytes(4).toString('hex')}-test`;
+      const verifier = new BucketVerificationService(clients, {
+        ...config,
+        bucket,
+      });
+
+      const error: unknown = await verifier
+        .onApplicationBootstrap()
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(BucketUnavailableError);
+      expect((error as Error).message).toContain(bucket);
+      // Still absent: the verification sent no CreateBucket.
+      await expect(
+        clients.internal.send(new HeadBucketCommand({ Bucket: bucket })),
+      ).rejects.toBeDefined();
+    });
+  });
+
+  it('signs part URLs with the API identity and delivery URLs with the delivery identity', async () => {
+    const target = readTestStorageTarget();
+    const key = newKey();
+    const uploadId = await storage.createMultipartUpload(key, 'binding-id');
+
+    const partUrl = await storage.presignUploadPart(key, uploadId, 1, 900);
+    const getUrl = await storage.presignGet(key, 900);
+
+    const signer = (url: string) =>
+      (new URL(url).searchParams.get('X-Amz-Credential') ?? '').split('/')[0];
+    expect(signer(partUrl)).toBe(target.identities.api.accessKeyId);
+    expect(signer(getUrl)).toBe(target.identities.delivery.accessKeyId);
+  });
+
+  it('cannot sign a delivery URL without the delivery identity (the worker)', async () => {
+    const workerConfig = testStorageConfig('worker');
+    const workerClients = buildS3Clients(workerConfig);
+    const workerStorage = new StorageService(workerClients, workerConfig);
+
+    await expect(workerStorage.presignGet(newKey(), 60)).rejects.toThrow(
+      'delivery identity',
+    );
+    expect(workerClients.deliverySigner).toBeUndefined();
+    destroyS3Clients(workerClients);
   });
 
   it('signs part URLs for the public host without checksum parameters, and a 5 MiB PUT returns an ETag', async () => {
-    const key = originalKey(randomUUID());
+    const key = newKey();
     const uploadId = await storage.createMultipartUpload(key, 'binding-1');
 
     const url = await storage.presignUploadPart(key, uploadId, 1, 900);
@@ -116,7 +177,7 @@ describe('StorageService against the pinned MinIO', () => {
   });
 
   it('signs internal GET URLs for the internal host, readable from the API container', async () => {
-    const key = originalKey(randomUUID());
+    const key = newKey();
     await storage.putObject(key, Buffer.from('internal-read'), 'text/plain');
 
     const url = await storage.presignInternalGet(key, 60);
@@ -128,7 +189,7 @@ describe('StorageService against the pinned MinIO', () => {
   });
 
   it('lists every part of an upload across pages, in order', async () => {
-    const key = originalKey(randomUUID());
+    const key = newKey();
     const uploadId = await storage.createMultipartUpload(key, 'binding-2');
     const etags = [
       await uploadPart(key, uploadId, 1, Buffer.from('one')),
@@ -146,7 +207,7 @@ describe('StorageService against the pinned MinIO', () => {
   });
 
   it('completes an upload, exposes the binding metadata and reports NoSuchUpload afterwards', async () => {
-    const key = originalKey(randomUUID());
+    const key = newKey();
     const uploadId = await storage.createMultipartUpload(key, 'binding-3');
     const etag1 = await uploadPart(key, uploadId, 1, randomBytes(5 * MIB));
     const etag2 = await uploadPart(key, uploadId, 2, Buffer.from('tail'));
@@ -168,7 +229,7 @@ describe('StorageService against the pinned MinIO', () => {
 
   describe('confirmUploadsGone', () => {
     it('returns aborted for a key with two open sessions, one of them unknown', async () => {
-      const key = originalKey(randomUUID());
+      const key = newKey();
       const known = await storage.createMultipartUpload(key, 'binding-4');
       const unknown = await storage.createMultipartUpload(key, 'binding-4');
       await uploadPart(key, unknown, 1, Buffer.from('in-flight'));
@@ -185,7 +246,7 @@ describe('StorageService against the pinned MinIO', () => {
     });
 
     it('returns completed for a key whose object carries the expected binding', async () => {
-      const key = originalKey(randomUUID());
+      const key = newKey();
       const uploadId = await storage.createMultipartUpload(key, 'binding-5');
       const etag = await uploadPart(key, uploadId, 1, Buffer.from('only-part'));
       await storage.completeMultipartUpload(key, uploadId, [
@@ -213,9 +274,7 @@ describe('StorageService against the pinned MinIO', () => {
           { maxAbortAttempts: 1, backoffMs: 1 },
         ),
       ).toBe('indeterminate');
-      down.internal.destroy();
-      down.singleAttempt.destroy();
-      down.publicSigner.destroy();
+      destroyS3Clients(down);
     });
   });
 
@@ -258,15 +317,13 @@ describe('StorageService against the pinned MinIO', () => {
       expect((error as StorageUnavailableError).kind).toBe('ambiguous');
       expect(elapsed).toBeLessThanOrEqual(STORAGE_TIMEOUTS.REQUEST_MS + 2_000);
       expect(connections).toBe(1);
-      paused.internal.destroy();
-      paused.singleAttempt.destroy();
-      paused.publicSigner.destroy();
+      destroyS3Clients(paused);
     });
   });
 
-  it('refuses to empty a bucket that is not a test bucket', async () => {
+  it('refuses to use a bucket that is not a test bucket', async () => {
     await expect(
-      emptyTestBucket(clients.internal, 'streamtube-videos'),
+      verifyTestBucket(clients.internal, 'streamtube-videos'),
     ).rejects.toBeInstanceOf(TestStorageGuardError);
   });
 });

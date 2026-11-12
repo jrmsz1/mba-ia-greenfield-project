@@ -1,4 +1,7 @@
-import { envValidationSchema } from './env.validation';
+import {
+  envValidationSchema,
+  workerEnvValidationSchema,
+} from './env.validation';
 import { VIDEO_ENV_DEFAULTS } from './video.constants';
 
 const requiredEnv = {
@@ -9,8 +12,8 @@ const requiredEnv = {
   JWT_REFRESH_SECRET: 'refresh-secret',
   S3_ACCESS_KEY_ID: 'access-key',
   S3_SECRET_ACCESS_KEY: 'secret-key',
-  MINIO_ROOT_USER: 'minio-user',
-  MINIO_ROOT_PASSWORD: 'minio-password',
+  S3_DELIVERY_ACCESS_KEY_ID: 'delivery-key',
+  S3_DELIVERY_SECRET_ACCESS_KEY: 'delivery-secret',
 };
 
 const validate = (env: Record<string, string>) =>
@@ -33,9 +36,9 @@ describe('envValidationSchema — phase 03 keys', () => {
   it.each([
     'S3_ACCESS_KEY_ID',
     'S3_SECRET_ACCESS_KEY',
-    'MINIO_ROOT_USER',
-    'MINIO_ROOT_PASSWORD',
-  ])('should require the credential %s', (key) => {
+    'S3_DELIVERY_ACCESS_KEY_ID',
+    'S3_DELIVERY_SECRET_ACCESS_KEY',
+  ])('should require the API credential %s', (key) => {
     const env: Record<string, string> = { ...requiredEnv };
     delete env[key];
 
@@ -45,6 +48,58 @@ describe('envValidationSchema — phase 03 keys', () => {
     });
 
     expect(error?.message).toContain(key);
+  });
+
+  describe('per-process storage credentials (TD-16 revision 2026-11-12)', () => {
+    it('should accept the API and the worker environments without MINIO_ROOT_*', () => {
+      const workerEnv: Record<string, string> = { ...requiredEnv };
+      delete workerEnv.S3_DELIVERY_ACCESS_KEY_ID;
+      delete workerEnv.S3_DELIVERY_SECRET_ACCESS_KEY;
+
+      expect(validate({}).error).toBeUndefined();
+      expect(
+        workerEnvValidationSchema.validate(workerEnv, { allowUnknown: true })
+          .error,
+      ).toBeUndefined();
+    });
+
+    it('should reject a delivery identity equal to the API identity', () => {
+      const { error } = validate({ S3_DELIVERY_ACCESS_KEY_ID: 'access-key' });
+
+      expect(error?.message).toContain('S3_DELIVERY_ACCESS_KEY_ID');
+    });
+
+    it('should forbid the delivery identity in the worker', () => {
+      const { error } = workerEnvValidationSchema.validate(requiredEnv, {
+        allowUnknown: true,
+        abortEarly: false,
+      });
+
+      expect(error?.message).toContain('S3_DELIVERY_ACCESS_KEY_ID');
+    });
+
+    it.each([envValidationSchema, workerEnvValidationSchema])(
+      'should not fall back to the test identities when S3_ACCESS_KEY_ID is missing',
+      (schema) => {
+        const env: Record<string, string> = {
+          ...requiredEnv,
+          S3_TEST_API_ACCESS_KEY_ID: 'test-api-key',
+          S3_TEST_API_SECRET_ACCESS_KEY: 'test-api-secret',
+        };
+        delete env.S3_ACCESS_KEY_ID;
+        if (schema === workerEnvValidationSchema) {
+          delete env.S3_DELIVERY_ACCESS_KEY_ID;
+          delete env.S3_DELIVERY_SECRET_ACCESS_KEY;
+        }
+
+        const { error } = schema.validate(env, {
+          allowUnknown: true,
+          abortEarly: false,
+        });
+
+        expect(error?.message).toContain('S3_ACCESS_KEY_ID');
+      },
+    );
   });
 
   it('should reject a processing input TTL that does not exceed the job timeout', () => {

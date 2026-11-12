@@ -12,8 +12,11 @@ import { VerificationToken } from '../auth/entities/verification-token.entity';
 import { Channel } from '../channels/entities/channel.entity';
 import storageConfig from '../config/storage.config';
 import uploadConfig from '../config/upload.config';
-import { BucketBootstrapService } from '../storage/bucket-bootstrap.service';
-import { buildS3Clients, type S3Clients } from '../storage/s3-clients.provider';
+import {
+  buildS3Clients,
+  destroyS3Clients,
+  type S3Clients,
+} from '../storage/s3-clients.provider';
 import { originalKey } from '../storage/storage-key';
 import { StorageService } from '../storage/storage.service';
 import {
@@ -21,7 +24,7 @@ import {
   createTestDataSource,
 } from '../test/create-test-data-source';
 import {
-  emptyTestBucket,
+  verifyTestBucket,
   fetchPresigned,
   testStorageConfig,
 } from '../test/test-storage';
@@ -60,22 +63,17 @@ describe('VideoDeliveryService URLs × pinned MinIO (Gates 7 and 8)', () => {
     const config = testStorageConfig();
     clients = buildS3Clients(config);
     storage = new StorageService(clients, config);
-    await new BucketBootstrapService(clients, config).ensureBucket(
-      config.bucket,
-    );
+    await verifyTestBucket(clients.internal, config.bucket);
     upload = uploadConfig();
   });
 
   afterAll(async () => {
     await dataSource.destroy();
-    clients.internal.destroy();
-    clients.singleAttempt.destroy();
-    clients.publicSigner.destroy();
+    destroyS3Clients(clients);
   });
 
   beforeEach(async () => {
     await cleanAllTables(dataSource);
-    await emptyTestBucket(clients.internal, storage.bucket);
     owner = await createTestOwner(dataSource);
     content = randomBytes(SIZE);
     video = await dataSource.getRepository(Video).save(
@@ -216,20 +214,28 @@ describe('VideoDeliveryService URLs × pinned MinIO (Gates 7 and 8)', () => {
   });
 
   describe('credential material in the emitted URL', () => {
-    it('never contains the secret key; the access key id appears only inside X-Amz-Credential (SigV4)', async () => {
-      const { secretAccessKey, accessKeyId } = storageConfig();
+    it('is signed by the delivery identity: only its key id, only inside X-Amz-Credential (SigV4)', async () => {
+      const {
+        secretAccessKey,
+        accessKeyId,
+        deliveryAccessKeyId,
+        deliverySecretAccessKey,
+      } = storageConfig();
       const { url } = await service().playbackUrl(video);
       const params = new URL(url).searchParams;
 
       expect(url).not.toContain(secretAccessKey);
+      expect(url).not.toContain(deliverySecretAccessKey);
+      // The API identity never signs delivery URLs (TD-04 revision 2026-11-12).
+      expect(url).not.toContain(accessKeyId);
       expect(
-        params.get('X-Amz-Credential')?.startsWith(`${accessKeyId}/`),
+        params.get('X-Amz-Credential')?.startsWith(`${deliveryAccessKeyId}/`),
       ).toBe(true);
       const outsideCredential = url.replace(
         /X-Amz-Credential=[^&]+/,
         'X-Amz-Credential=…',
       );
-      expect(outsideCredential).not.toContain(accessKeyId);
+      expect(outsideCredential).not.toContain(deliveryAccessKeyId);
     });
   });
 });

@@ -19,9 +19,12 @@ import { JobPublisherService } from '../queue/job-publisher.service';
 import { PGBOSS, QUEUES } from '../queue/queue.constants';
 import { QueueModule } from '../queue/queue.module';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { BucketBootstrapService } from '../storage/bucket-bootstrap.service';
 import { UPLOAD_BINDING_METADATA_KEY } from '../storage/storage.constants';
-import { buildS3Clients, type S3Clients } from '../storage/s3-clients.provider';
+import {
+  buildS3Clients,
+  destroyS3Clients,
+  type S3Clients,
+} from '../storage/s3-clients.provider';
 import { StorageUnavailableError } from '../storage/storage-errors';
 import { originalKey } from '../storage/storage-key';
 import { StorageService } from '../storage/storage.service';
@@ -29,7 +32,7 @@ import {
   cleanAllTables,
   createTestTypeOrmModule,
 } from '../test/create-test-data-source';
-import { emptyTestBucket, testStorageConfig } from '../test/test-storage';
+import { verifyTestBucket, testStorageConfig } from '../test/test-storage';
 import { createTestOwner, type TestOwner } from '../test/video-fixtures';
 import { User } from '../users/entities/user.entity';
 import { Video } from './entities/video.entity';
@@ -69,9 +72,7 @@ describe('UploadRecoveryService (real PostgreSQL + MinIO)', () => {
     const config = testStorageConfig();
     clients = buildS3Clients(config);
     storage = new StorageService(clients, config);
-    await new BucketBootstrapService(clients, config).ensureBucket(
-      config.bucket,
-    );
+    await verifyTestBucket(clients.internal, config.bucket);
     uploads = new VideoUploadService(dataSource, storage, {
       ...uploadConfig(),
       partSizeBytes: 5 * MIB,
@@ -85,15 +86,12 @@ describe('UploadRecoveryService (real PostgreSQL + MinIO)', () => {
 
   afterAll(async () => {
     await app.close();
-    clients.internal.destroy();
-    clients.singleAttempt.destroy();
-    clients.publicSigner.destroy();
+    destroyS3Clients(clients);
   });
 
   beforeEach(async () => {
     jest.restoreAllMocks();
     await cleanAllTables(dataSource);
-    await emptyTestBucket(clients.internal, storage.bucket);
     await boss.deleteAllJobs(QUEUES.VIDEO_PROCESS);
     owner = await createTestOwner(dataSource);
   });

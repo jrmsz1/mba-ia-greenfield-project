@@ -9,6 +9,7 @@
  * MEDIA_TOOLS_REQUIRED=1 a missing ffprobe fails the run instead.
  */
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
@@ -16,10 +17,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ConfigType } from '@nestjs/config';
 import workerConfig from '../config/worker.config';
-import { buildS3Clients, type S3Clients } from '../storage/s3-clients.provider';
+import {
+  buildS3Clients,
+  destroyS3Clients,
+  type S3Clients,
+} from '../storage/s3-clients.provider';
 import { StorageService } from '../storage/storage.service';
-import { BucketBootstrapService } from '../storage/bucket-bootstrap.service';
-import { emptyTestBucket, testStorageConfig } from '../test/test-storage';
+import { originalKey } from '../storage/storage-key';
+import { testStorageConfig, verifyTestBucket } from '../test/test-storage';
 import { FfmpegRunner } from './ffmpeg.runner';
 import { FfprobeRunner } from './ffprobe.runner';
 import { MediaToolError } from './media-errors';
@@ -61,7 +66,7 @@ const REJECTED = [
 describeMedia('media probe and thumbnail (Gate 6, real FFmpeg)', () => {
   let fixtures: string;
   let clients: S3Clients;
-  let storage: StorageService;
+  let apiClients: S3Clients;
   let worker: ConfigType<typeof workerConfig>;
   let probe: FfprobeRunner;
   let ffmpeg: FfmpegRunner;
@@ -90,16 +95,19 @@ describeMedia('media probe and thumbnail (Gate 6, real FFmpeg)', () => {
     );
     expect(gen.code).toBe(0);
 
-    const config = testStorageConfig();
+    // The worker reads (worker identity); fixtures are written as originals
+    // by the restricted test API identity — the only one allowed to write
+    // `videos/*/original` (TD-04). Each run uses fresh keys: no bucket reset.
+    const config = testStorageConfig('worker');
     clients = buildS3Clients(config);
-    storage = new StorageService(clients, config);
-    await new BucketBootstrapService(clients, config).ensureBucket(
-      config.bucket,
-    );
-    await emptyTestBucket(clients.internal, storage.bucket);
+    const storage = new StorageService(clients, config);
+    const apiConfig = testStorageConfig('api');
+    apiClients = buildS3Clients(apiConfig);
+    const writer = new StorageService(apiClients, apiConfig);
+    await verifyTestBucket(clients.internal, config.bucket);
     for (const name of readdirSync(fixtures)) {
-      const key = `media-fixtures/${name}`;
-      await storage.putObject(
+      const key = originalKey(randomUUID());
+      await writer.putObject(
         key,
         await readFile(join(fixtures, name)),
         'application/octet-stream',
@@ -112,10 +120,8 @@ describeMedia('media probe and thumbnail (Gate 6, real FFmpeg)', () => {
   });
 
   afterAll(async () => {
-    await emptyTestBucket(clients.internal, storage.bucket);
-    clients.internal.destroy();
-    clients.singleAttempt.destroy();
-    clients.publicSigner.destroy();
+    destroyS3Clients(clients);
+    destroyS3Clients(apiClients);
     await rm(fixtures, { recursive: true, force: true });
   });
 

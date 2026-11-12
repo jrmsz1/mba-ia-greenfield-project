@@ -20,6 +20,7 @@
  *   docker inspect -f '{{.State.ExitCode}}' $(docker compose ps -aq worker)
  */
 import { spawn } from 'node:child_process';
+import { testWorkerProcessEnv } from '../test/test-storage';
 
 jest.setTimeout(120_000);
 
@@ -43,7 +44,9 @@ function startWorker(signalOn?: string): Worker {
     process.execPath,
     ['-r', 'ts-node/register', 'src/worker/main.worker.ts'],
     {
-      env: { ...process.env, TS_NODE_TRANSPILE_ONLY: 'true' },
+      // The worker runs with the restricted test WORKER identity and without
+      // the delivery identity, which its schema forbids (TD-16 rev 2026-11-12).
+      env: { ...testWorkerProcessEnv(), TS_NODE_TRANSPILE_ONLY: 'true' },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
