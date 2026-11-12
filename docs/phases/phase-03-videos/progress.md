@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 13/17 completed
+**SIs:** 14/17 completed
 
 ## Required Technical Verification Gates
 
@@ -157,9 +157,15 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - MediaModule (FfprobeRunner, FfmpegRunner) imported by WorkerModule; the processing handler that uses it is SI-03.14.
 
 ### SI-03.14 — Worker de processamento do vídeo
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 10 unit (video-processing.worker.spec.ts) + 8 integration on real pg-boss/PostgreSQL/pinned MinIO/FFmpeg 7.1.5 (video-processing.worker.integration-spec.ts, worker container); regression: nestjs-api npm test 58 passed + 2 skipped suites (437 passed + 31 skipped — the FFmpeg suites), test:e2e 6 suites / 84, worker `npm run test:media` 7 suites / 83; tsc 0; eslint baseline
+- **Observations:**
+  - All 8 ACs verified: ready with duration/metadata/thumbnail_generated_at + `videos/<id>/thumbnail.jpg`; HEVC → failed/UNSUPPORTED_FORMAT after 1 attempt (retryCount 0); transient then success → ready with processing_attempts = 2 and a different input URL per attempt; duplicate delivery → no second thumbnail write, single ready; job data = `{ videoId }` only; missing original → probe never runs, failed/PROCESSING_FAILED; no X-Amz/URL in worker logs, job output or failure_reason; 0 `idle in transaction` sessions while the probe runs.
+  - Attempt fence (user requirement): the claim increments processing_attempts and every conclusion (`ready`/`failed`) is `WHERE processing_status = 'processing' AND processing_attempts = <own attempt>`; a stale worker whose attempt was re-claimed ends `superseded` and cannot conclude (integration test).
+  - Exhausted retries → failed/PROCESSING_FAILED decided in the handler from job.retryCount ≥ retryLimit (the job then completes); transient errors are rethrown with a redacted message because pg-boss persists it in the job output.
+  - A thumbnail decode failure (permanent ffmpeg error) → failed/PROCESSING_FAILED (TD-07: covers files that pass ffprobe but are incomplete).
+  - pg-boss typing: `work(name, { includeMetadata: true }, ([job]: JobWithMetadata<…>[]) => …)` without an explicit generic — passing `<T>` disables inference of the literal options and selects the metadata-less handler.
+  - Separate task (out of scope, pre-existing since SI-03.12): a SIGTERM that arrives while the worker is still booting (before enableShutdownHooks) is ignored by Node as PID 1 and Docker SIGKILLs after stop_grace_period (exit 137, reproduced). After boot the stop is graceful (exit 0, <1 s). Safe by design (pg-boss expiry + attempt fence); candidate fix: `init: true` on the worker service or installing the signal handler before bootstrap.
 
 ### SI-03.15 — Reaper/reconciliador agendado
 - **Status:** pending
