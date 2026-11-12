@@ -206,6 +206,21 @@ export class UploadRecoveryService {
     contradiction: Contradiction,
     head: ObjectHead,
   ): Promise<boolean> {
+    const key = originalKey(videoId);
+    // `failed` releases the upload's quota reservation (TD-13): only once no
+    // multipart session can still receive parts for this key (TD-14).
+    if (!(await this.noOpenSessions(videoId, key))) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'upload_invalid_deferred_session_open',
+          videoId,
+          key,
+          contradiction,
+          action: 'no transition: a multipart session may still be open',
+        }),
+      );
+      return false;
+    }
     const moved = await this.transition(
       videoId,
       from,
@@ -213,7 +228,6 @@ export class UploadRecoveryService {
       FAILURE_REASONS.UPLOAD_INVALID,
     );
     if (!moved) return false;
-    const key = originalKey(videoId);
     if (contradiction === 'binding') {
       this.logger.warn(
         JSON.stringify({
@@ -250,6 +264,30 @@ export class UploadRecoveryService {
     }
     await this.storage.deleteObject(key);
     return true;
+  }
+
+  /**
+   * Positive evidence that no multipart session of the key is open: the
+   * known upload id answers `NoSuchUpload` AND the key's session listing is
+   * empty (the listing alone is never proof — TD-14). A storage error means
+   * "unknown" → false, so nothing is released on an unreachable MinIO.
+   */
+  private async noOpenSessions(videoId: string, key: string): Promise<boolean> {
+    const { upload_id: uploadId } = await this.loadWithToken(videoId);
+    try {
+      if (uploadId) {
+        try {
+          await this.storage.listParts(key, uploadId);
+          return false; // the known session still answers: it is open
+        } catch (error) {
+          if (!(error instanceof UploadNotFoundError)) throw error;
+        }
+      }
+      return (await this.storage.listMultipartUploads(key)).length === 0;
+    } catch (error) {
+      if (error instanceof StorageError) return false;
+      throw error;
+    }
   }
 
   /** Compare-and-set status change; false when the row was not in `from`. */

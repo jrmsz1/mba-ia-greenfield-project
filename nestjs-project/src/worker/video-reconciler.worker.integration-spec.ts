@@ -42,6 +42,7 @@ import {
 } from '../test/video-fixtures';
 import { User } from '../users/entities/user.entity';
 import { Video } from '../videos/entities/video.entity';
+import { QUOTA_HOLDING_STATUSES } from '../videos/abuse-limits';
 import { UploadRecoveryService } from '../videos/upload-recovery.service';
 import { VideoUploadService } from '../videos/video-upload.service';
 import { VideoReconcilerWorker } from './video-reconciler.worker';
@@ -433,5 +434,78 @@ describe('VideoReconcilerWorker (real PostgreSQL + MinIO + pg-boss)', () => {
       await boss.offWork(QUEUES.VIDEO_RECONCILE);
       await boss.unschedule(QUEUES.VIDEO_RECONCILE);
     }
+  });
+
+  it.each([
+    ['DIVERGENT', { [UPLOAD_BINDING_METADATA_KEY]: 'someone-else' }],
+    ['MISSING', {}],
+  ])(
+    'keeps the reservation while a multipart session is still OPEN, even with a %s-binding object at the key; refuses only once the session is gone',
+    async (_label, metadata) => {
+      const video = await startedUpload(); // session open
+      const key = originalKey(video.id);
+      await s3.internal.send(
+        new PutObjectCommand({
+          Bucket: storage.bucket,
+          Key: key,
+          Body: randomBytes(1024),
+          Metadata: metadata,
+        }),
+      );
+      await expire(video.id);
+      // Every abort is lost: the session stays open through the whole run.
+      const abort = jest
+        .spyOn(storage, 'abortMultipartUpload')
+        .mockResolvedValue(undefined);
+      const del = jest.spyOn(storage, 'deleteObject');
+
+      const first = await reconciler.runOnce(FAST);
+
+      expect(first).toMatchObject({ identityContradictions: 0, expired: 0 });
+      expect(first.indeterminate).toBe(1);
+      const held = await row(video.id);
+      expect(held?.processing_status).toBe('uploading');
+      expect(QUOTA_HOLDING_STATUSES).toContain(held?.processing_status);
+      await expect(
+        storage.listParts(key, video.upload_id as string),
+      ).resolves.toBeDefined(); // still open
+
+      // The abort finally lands: the session is gone, the refusal applies.
+      abort.mockRestore();
+      const second = await reconciler.runOnce(FAST);
+
+      expect(second.identityContradictions).toBe(1);
+      expect(await row(video.id)).toMatchObject({
+        processing_status: 'failed',
+        failure_reason: 'UPLOAD_INVALID',
+      });
+      expect(del).not.toHaveBeenCalled();
+      expect(await storage.headObject(key)).not.toBeNull();
+      expect(await activeJobs(video.id)).toHaveLength(0);
+    },
+  );
+
+  it('keeps a stale completing claim while its session is still open, even with a foreign-binding object at the key', async () => {
+    const video = await startedUpload(); // session open, never completed
+    const key = originalKey(video.id);
+    await s3.internal.send(
+      new PutObjectCommand({
+        Bucket: storage.bucket,
+        Key: key,
+        Body: randomBytes(1024),
+        Metadata: { [UPLOAD_BINDING_METADATA_KEY]: 'someone-else' },
+      }),
+    );
+    await dataSource.query(
+      `UPDATE "videos" SET "processing_status" = 'completing', "completing_since" = now() - interval '10 minutes' WHERE id = $1`,
+      [video.id],
+    );
+    const del = jest.spyOn(storage, 'deleteObject');
+
+    const report = await reconciler.runOnce(FAST);
+
+    expect(report.indeterminate).toBe(1);
+    expect((await row(video.id))?.processing_status).toBe('completing');
+    expect(del).not.toHaveBeenCalled();
   });
 });
