@@ -36,6 +36,20 @@ export const TEST_STORAGE_IDENTITY_KEYS = {
   ],
 } as const;
 
+/**
+ * Root and production credentials: never present in a test process — the
+ * ephemeral test containers receive only the restricted test identities
+ * (phase-03-videos/TD-15, TD-16 "evaluator setup" revisions).
+ */
+const NON_TEST_CREDENTIAL_KEYS = [
+  'MINIO_ROOT_USER',
+  'MINIO_ROOT_PASSWORD',
+  'S3_ACCESS_KEY_ID',
+  'S3_SECRET_ACCESS_KEY',
+  'S3_DELIVERY_ACCESS_KEY_ID',
+  'S3_DELIVERY_SECRET_ACCESS_KEY',
+] as const;
+
 /** Held only by the external maintenance container, never by a test process. */
 export const TEST_MAINTENANCE_KEYS = [
   'S3_TEST_MAINTENANCE_ACCESS_KEY_ID',
@@ -56,8 +70,8 @@ export interface TestStorageTarget {
 
 interface OperationalStorageEnv {
   bucket?: string;
-  accessKeyId?: string;
-  deliveryAccessKeyId?: string;
+  /** Root/production credential keys present before the test mapping. */
+  credentialKeys: string[];
 }
 
 /**
@@ -74,8 +88,9 @@ function operationalEnv(env: NodeJS.ProcessEnv): OperationalStorageEnv {
   return (
     replacedOperationalEnv.get(env) ?? {
       bucket: env.S3_BUCKET?.trim() || undefined,
-      accessKeyId: env.S3_ACCESS_KEY_ID?.trim() || undefined,
-      deliveryAccessKeyId: env.S3_DELIVERY_ACCESS_KEY_ID?.trim() || undefined,
+      credentialKeys: NON_TEST_CREDENTIAL_KEYS.filter(
+        (key) => env[key] !== undefined,
+      ),
     }
   );
 }
@@ -97,9 +112,9 @@ function readIdentity(
 
 /**
  * Validates the test storage target without touching the network or `env`:
- * explicit test context, no maintenance credentials in the process, a test
- * bucket distinct from the operational one, and three complete, distinct
- * test identities that differ from the operational ones. Fails closed.
+ * explicit test context, no maintenance, root or production credential in
+ * the process, a test bucket distinct from the operational one, and three
+ * complete, distinct test identities. Fails closed.
  */
 export function readTestStorageTarget(
   env: NodeJS.ProcessEnv = process.env,
@@ -113,6 +128,12 @@ export function readTestStorageTarget(
   if (leaked.length > 0) {
     throw new TestStorageGuardError(
       `${leaked.join(', ')} must not reach a process under test: storage maintenance runs only in the external maintenance container.`,
+    );
+  }
+  const operationalCredentials = operationalEnv(env).credentialKeys;
+  if (operationalCredentials.length > 0) {
+    throw new TestStorageGuardError(
+      `${operationalCredentials.join(', ')} must not reach a process under test: test containers receive only the restricted S3_TEST_* identities (no root, no production identity).`,
     );
   }
 
@@ -135,15 +156,6 @@ export function readTestStorageTarget(
   if (new Set(ids).size !== ids.length) {
     throw new TestStorageGuardError(
       'The test API, worker and delivery identities must be distinct.',
-    );
-  }
-  const operationalIds = [
-    operational.accessKeyId,
-    operational.deliveryAccessKeyId,
-  ].filter((id): id is string => id !== undefined);
-  if (ids.some((id) => operationalIds.includes(id))) {
-    throw new TestStorageGuardError(
-      'A test identity equals an operational identity (S3_ACCESS_KEY_ID / S3_DELIVERY_ACCESS_KEY_ID); test identities must be separate.',
     );
   }
   return { bucket, identities };

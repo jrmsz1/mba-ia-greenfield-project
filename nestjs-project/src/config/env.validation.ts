@@ -101,6 +101,20 @@ function crossKeyRules(
   return env;
 }
 
+/**
+ * Credentials no operational process may hold (phase-03-videos/TD-16
+ * revisions of 2026-11-12): the MinIO root pair lives only in `minio` and the
+ * provisioning container, the maintenance identity only in the maintenance
+ * container. Forbidding them here makes a stale shared `.env` fail closed
+ * instead of silently carrying root into the API or the worker.
+ */
+const forbiddenCredentialKeys = {
+  MINIO_ROOT_USER: Joi.forbidden(),
+  MINIO_ROOT_PASSWORD: Joi.forbidden(),
+  S3_TEST_MAINTENANCE_ACCESS_KEY_ID: Joi.forbidden(),
+  S3_TEST_MAINTENANCE_SECRET_ACCESS_KEY: Joi.forbidden(),
+};
+
 const baseEnvKeys = {
   NODE_ENV: Joi.string()
     .valid('development', 'production', 'test')
@@ -123,6 +137,7 @@ const baseEnvKeys = {
   MAIL_FROM: Joi.string().default('"StreamTube" <noreply@streamtube.com>'),
   SWAGGER_ENABLED: Joi.string().valid('true', 'false').default('false'),
   ...videoKeys,
+  ...forbiddenCredentialKeys,
 };
 
 /**

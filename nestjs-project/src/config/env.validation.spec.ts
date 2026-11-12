@@ -63,6 +63,29 @@ describe('envValidationSchema — phase 03 keys', () => {
       ).toBeUndefined();
     });
 
+    it.each([
+      'MINIO_ROOT_USER',
+      'MINIO_ROOT_PASSWORD',
+      'S3_TEST_MAINTENANCE_ACCESS_KEY_ID',
+      'S3_TEST_MAINTENANCE_SECRET_ACCESS_KEY',
+    ])(
+      'should refuse %s in the API and the worker (no root, no maintenance)',
+      (key) => {
+        const workerEnv: Record<string, string> = {
+          ...requiredEnv,
+          [key]: 'x',
+        };
+        delete workerEnv.S3_DELIVERY_ACCESS_KEY_ID;
+        delete workerEnv.S3_DELIVERY_SECRET_ACCESS_KEY;
+        const opts = { allowUnknown: true, abortEarly: false };
+
+        expect(validate({ [key]: 'x' }).error?.message).toContain(key);
+        expect(
+          workerEnvValidationSchema.validate(workerEnv, opts).error?.message,
+        ).toContain(key);
+      },
+    );
+
     it('should reject a delivery identity equal to the API identity', () => {
       const { error } = validate({ S3_DELIVERY_ACCESS_KEY_ID: 'access-key' });
 

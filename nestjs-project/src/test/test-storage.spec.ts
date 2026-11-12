@@ -24,10 +24,6 @@ const testEnv = (overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
   NODE_ENV: 'test',
   S3_BUCKET: 'streamtube-videos',
   S3_TEST_BUCKET: 'streamtube-videos-test',
-  S3_ACCESS_KEY_ID: 'prod-api-id',
-  S3_SECRET_ACCESS_KEY: 'prod-api-secret',
-  S3_DELIVERY_ACCESS_KEY_ID: 'prod-delivery-id',
-  S3_DELIVERY_SECRET_ACCESS_KEY: 'prod-delivery-secret',
   S3_TEST_API_ACCESS_KEY_ID: 'test-api-id',
   S3_TEST_API_SECRET_ACCESS_KEY: 'test-api-secret',
   S3_TEST_WORKER_ACCESS_KEY_ID: 'test-worker-id',
@@ -84,13 +80,17 @@ describe('readTestStorageTarget', () => {
     ).toThrow(TestStorageGuardError);
   });
 
-  it('should refuse a test identity equal to an operational one', () => {
-    expect(() =>
-      readTestStorageTarget(
-        testEnv({ S3_TEST_DELIVERY_ACCESS_KEY_ID: 'prod-delivery-id' }),
-      ),
-    ).toThrow(TestStorageGuardError);
-  });
+  it.each([
+    'MINIO_ROOT_USER',
+    'MINIO_ROOT_PASSWORD',
+    'S3_ACCESS_KEY_ID',
+    'S3_DELIVERY_SECRET_ACCESS_KEY',
+  ])(
+    'should refuse a root or production credential (%s) in the test process',
+    (key) => {
+      expect(() => readTestStorageTarget(testEnv({ [key]: 'x' }))).toThrow(key);
+    },
+  );
 });
 
 describe('applyTestStorageEnv', () => {
@@ -120,7 +120,7 @@ describe('applyTestStorageEnv', () => {
     const env = testEnv({ S3_TEST_BUCKET: 'streamtube-videos' });
 
     expect(() => applyTestStorageEnv(env)).toThrow(TestStorageGuardError);
-    expect(env.S3_ACCESS_KEY_ID).toBe('prod-api-id');
+    expect(env).not.toHaveProperty('S3_ACCESS_KEY_ID');
   });
 });
 

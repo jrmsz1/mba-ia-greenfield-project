@@ -6,19 +6,28 @@ import { PGBOSS } from '../queue/queue.constants';
 import { StorageService } from '../storage/storage.service';
 
 /**
- * The worker never holds the delivery identity and its schema forbids it
- * (phase-03-videos/TD-16 revision 2026-11-12); this test may run inside the
- * API process, which does hold it, so the module is loaded from a
- * worker-shaped environment. Config validation runs at import (forRoot).
+ * Compile test only: the module is loaded from a fictitious, worker-shaped
+ * environment (its own identity, no delivery identity — which the worker
+ * schema forbids, phase-03-videos/TD-16). It must not depend on the
+ * credentials of whatever container runs it: the ephemeral test containers
+ * hold only the restricted test identities, the API holds the delivery one.
+ * Config validation runs at import (forRoot).
  */
-const DELIVERY_KEYS = [
-  'S3_DELIVERY_ACCESS_KEY_ID',
-  'S3_DELIVERY_SECRET_ACCESS_KEY',
-] as const;
+const WORKER_SHAPED_ENV: Record<string, string | undefined> = {
+  S3_ACCESS_KEY_ID: 'compile-test-worker-id',
+  S3_SECRET_ACCESS_KEY: 'compile-test-worker-secret',
+  S3_DELIVERY_ACCESS_KEY_ID: undefined,
+  S3_DELIVERY_SECRET_ACCESS_KEY: undefined,
+};
 
 function loadWorkerModule(): typeof import('./worker.module') {
-  const saved = DELIVERY_KEYS.map((key) => [key, process.env[key]] as const);
-  for (const key of DELIVERY_KEYS) delete process.env[key];
+  const saved = Object.keys(WORKER_SHAPED_ENV).map(
+    (key) => [key, process.env[key]] as const,
+  );
+  for (const [key, value] of Object.entries(WORKER_SHAPED_ENV)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   try {
     // Deferred require: nothing else in this file imports worker.module, so
     // its forRoot() validation runs here, without the delivery identity.
@@ -27,7 +36,8 @@ function loadWorkerModule(): typeof import('./worker.module') {
     );
   } finally {
     for (const [key, value] of saved) {
-      if (value !== undefined) process.env[key] = value;
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
     }
   }
 }

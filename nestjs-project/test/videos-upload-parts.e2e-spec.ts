@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import request from 'supertest';
 import { originalKey } from '../src/storage/storage-key';
 import { StorageUnavailableError } from '../src/storage/storage-errors';
+import storageConfig from '../src/config/storage.config';
 import {
   fetchPresigned,
   readTestStorageTarget,
@@ -98,7 +99,9 @@ describe('videos-upload-parts', () => {
       const ttl = (Date.parse(part.expires_at) - requestedAt) / 1000;
       expect(ttl).toBeGreaterThan(ctx.upload.partPresignTtlSeconds - 10);
       expect(ttl).toBeLessThanOrEqual(ctx.upload.partPresignTtlSeconds + 10);
-      expect(new URL(part.url).host).toBe('localhost:9000');
+      expect(new URL(part.url).host).toBe(
+        new URL(storageConfig().publicEndpoint).host,
+      );
       // Signed by the API identity, never delivery or root (TD-04 rev).
       const credential =
         new URL(part.url).searchParams.get('X-Amz-Credential') ?? '';
