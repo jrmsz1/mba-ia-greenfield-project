@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 3/17 completed
+**SIs:** 4/17 completed
 
 ## Required Technical Verification Gates
 
@@ -47,9 +47,15 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - Compose interpolation uses ${VAR:?} so MinIO refuses to start without MINIO_ROOT_USER / MINIO_ROOT_PASSWORD in .env.
 
 ### SI-03.4 — Módulo de storage S3 (dois endpoints, presigner, bucket)
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 36 passing (unit 26: multipart-cleanup + classification, storage.module, test-storage; integration 10 against the pinned MinIO); regression npm test 259, test:e2e 52, tsc 0, eslint baseline
+- **Observations:**
+  - @aws-sdk/client-s3 and @aws-sdk/s3-request-presigner 3.1167.0 installed (Context7 snapshot lists up to 3.1153.0; the surface used matches library-refs.md).
+  - Verified on the pinned MinIO: the upload-binding object metadata set at CreateMultipartUpload survives CompleteMultipartUpload (residual risk noted in the plan revision is cleared for SI-03.10).
+  - Three clients: internal (SDK retries), singleAttempt (maxAttempts 1, for Create/Complete) and publicSigner; every call bounded by connectionTimeout 3 s / requestTimeout 15 s plus an AbortSignal.
+  - Test helper fetchPresigned connects to S3_ENDPOINT while keeping the public Host header the signature is bound to (the API container cannot reach localhost:9000).
+  - listParts gained an optional pageSize (MaxParts) so pagination is testable without 1000+ parts.
+  - Plan Tests row storage-key.spec.ts was replaced in the plan revision by multipart-cleanup.spec.ts; storage-key.ts is two one-line functions covered by the integration test keys.
 
 ### SI-03.5 — Módulo de fila pg-boss (API publica, worker consome)
 - **Status:** pending
