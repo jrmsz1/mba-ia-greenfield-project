@@ -1,10 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { IsNull, type DataSource, type EntityManager } from 'typeorm';
-import type { PostgresConnectionOptions } from 'typeorm/driver/postgres/PostgresConnectionOptions';
-import { Client, type ClientConfig } from 'pg';
 import { Channel } from '../channels/entities/channel.entity';
 import uploadConfig from '../config/upload.config';
 import { confirmUploadsGone } from '../storage/multipart-cleanup';
@@ -14,6 +12,7 @@ import { StorageService } from '../storage/storage.service';
 import { QUOTA_HOLDING_STATUSES } from './abuse-limits';
 import { Video } from './entities/video.entity';
 import { insertWithUniquePublicId } from './public-id.generator';
+import { withVideoSessionLock } from './video-session-lock';
 import {
   assertUploadAdmitted,
   planParts,
@@ -55,8 +54,6 @@ export interface StartUploadResult {
  */
 @Injectable()
 export class VideoUploadService {
-  private readonly logger = new Logger(VideoUploadService.name);
-
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly storage: StorageService,
@@ -170,59 +167,14 @@ export class VideoUploadService {
   /** Phase 2: create (or recover) the multipart upload of a reservation. */
   private async ensureMultipartUpload(reserved: Video): Promise<Video> {
     if (reserved.upload_id) return reserved;
-
-    // Dedicated connection, never taken from or returned to the pool: it is
-    // closed in `finally`, so even an unconfirmed unlock cannot leave a
-    // pooled connection holding the session lock — PostgreSQL releases the
-    // lock when the connection closes.
-    const lockClient = new Client(this.lockConnectionOptions());
-    await lockClient.connect();
-    let locked = false;
-    try {
-      const { rows } = await lockClient.query<{ acquired: boolean }>(
-        'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired',
-        [reserved.id],
-      );
-      if (!rows[0].acquired) {
-        throw new UploadStartInProgressException();
-      }
-      locked = true;
-      return await this.createOrRecover(this.dataSource.manager, reserved.id);
-    } finally {
-      if (locked && !(await this.unlock(lockClient, reserved.id))) {
-        this.logger.warn(
-          `advisory unlock not confirmed for video ${reserved.id}; closing the lock connection releases it`,
-        );
-      }
-      await lockClient.end();
-    }
-  }
-
-  private lockConnectionOptions(): ClientConfig {
-    const options = this.dataSource.options as PostgresConnectionOptions;
-    return {
-      host: options.host,
-      port: options.port,
-      user: options.username,
-      password:
-        typeof options.password === 'string' ? options.password : undefined,
-      database: options.database,
-    };
-  }
-
-  private async unlock(client: Client, videoId: string): Promise<boolean> {
-    try {
-      const { rows } = await client.query<{ released: boolean }>(
-        'SELECT pg_advisory_unlock(hashtextextended($1, 0)) AS released',
-        [videoId],
-      );
-      return rows[0].released === true;
-    } catch (error) {
-      this.logger.warn(
-        `advisory unlock failed for video ${videoId}: ${String(error)}`,
-      );
-      return false;
-    }
+    const locked = await withVideoSessionLock(
+      this.dataSource,
+      reserved.id,
+      async () =>
+        await this.createOrRecover(this.dataSource.manager, reserved.id),
+    );
+    if (!locked.acquired) throw new UploadStartInProgressException();
+    return locked.value;
   }
 
   private async createOrRecover(

@@ -20,6 +20,7 @@ import { createTestOwner, type TestOwner } from '../test/video-fixtures';
 import { User } from '../users/entities/user.entity';
 import { BucketBootstrapService } from '../storage/bucket-bootstrap.service';
 import { Video } from './entities/video.entity';
+import { sessionLockOps } from './video-session-lock';
 import { VideoUploadService } from './video-upload.service';
 import {
   ActiveUploadLimitExceededException,
@@ -355,7 +356,7 @@ describe('VideoUploadService.start (real PostgreSQL + MinIO)', () => {
       );
     const svc = service();
     const unlock = jest
-      .spyOn(svc as unknown as { unlock: () => Promise<boolean> }, 'unlock')
+      .spyOn(sessionLockOps, 'unlock')
       .mockResolvedValueOnce(false);
 
     await expect(start(svc, 'x-1')).rejects.toBeInstanceOf(

@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { VideoProcessingWorker } from './video-processing.worker';
+import { VideoReconcilerWorker } from './video-reconciler.worker';
 import { WorkerModule } from './worker.module';
 
 const logger = new Logger('Worker');
@@ -29,6 +30,7 @@ async function bootstrap(): Promise<void> {
   for (const signal of SHUTDOWN_SIGNALS) process.off(signal, exitDuringBoot);
   app.enableShutdownHooks();
   await app.get(VideoProcessingWorker).start();
+  await app.get(VideoReconcilerWorker).start();
   logger.log('Video worker started');
 }
 void bootstrap();

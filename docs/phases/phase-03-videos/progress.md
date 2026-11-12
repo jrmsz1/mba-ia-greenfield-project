@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 14/17 completed
+**SIs:** 15/17 completed
 
 ## Required Technical Verification Gates
 
@@ -168,9 +168,17 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - Separate task (out of scope, pre-existing since SI-03.12): a SIGTERM that arrives while the worker is still booting (before enableShutdownHooks) is ignored by Node as PID 1 and Docker SIGKILLs after stop_grace_period (exit 137, reproduced). After boot the stop is graceful (exit 0, <1 s). Safe by design (pg-boss expiry + attempt fence); candidate fix: `init: true` on the worker service or installing the signal handler before bootstrap.
 
 ### SI-03.15 — Reaper/reconciliador agendado
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 10 unit (video-reconciler.worker.spec.ts) + 10 integration on real PostgreSQL/pinned MinIO/pg-boss (video-reconciler.worker.integration-spec.ts) + 2 integration on the real entrypoint (main.worker.integration-spec.ts); regression: nestjs-api npm test 61 passed + 2 skipped suites (461 passed + 32 skipped — the FFmpeg suites), test:e2e 6 suites / 84, worker `npm run test:media` 10 suites / 107; tsc 0; eslint baseline
+- **Observations:**
+  - All 8 ACs verified: expired upload → expired + ListParts NoSuchUpload; abort repeated when the first abort does not end the session; expired-but-completed object → proof → uploaded + job (never expired); orphan reservation removed only after NoSuchUpload + HeadObject 404; storage unreachable → orphan, expired and stale rows unchanged (quota kept); stale completing with a proven object → uploaded + 1 job; uploaded without job → exactly one job, second run none; two overlapping runs → each transition and job exactly once.
+  - Review requirements: the reconciler never calls DeleteObject; an object with a divergent binding is preserved (row stays uploading, quota kept, `indeterminate`); capacity is released only on `aborted`; StorageError is never read as absence; every per-video action runs under the SAME non-blocking session lock as the upload start + compare-and-set.
+  - The SI-03.7 advisory lock was extracted to src/videos/video-session-lock.ts (`withVideoSessionLock`, same SQL, same dedicated connection) and is shared by VideoUploadService and the reconciler; behavior unchanged (upload suites green).
+  - Review item 1: the processing worker now checks the original's upload-binding in addition to its size (foreign/missing → UPLOAD_INVALID, no probe, no delete).
+  - Review item 2: the thumbnail PUT + `ready` run in one short transaction that row-locks the video only if it still belongs to the attempt; a stale attempt never writes the thumbnail (unit + integration). The lock is held only for the JPEG PUT, never during the media tools.
+  - Review item 3 (boot shutdown): reproduced exit 137 after 41 s on a stop during boot; fixed with `init: true` (tini) on the worker service + an early signal handler, and job consumption now starts only after enableShutdownHooks. After: stop during boot and after boot both ~1 s, exit 143 (SIGTERM), "pg-boss stopped gracefully (SIGTERM)" logged. Reproducible test: main.worker.integration-spec.ts spawns the real entrypoint.
+  - Review item 4: the pinned MinIO ignores If-Match on DeleteObject (verified); `markInvalid` re-reads HeadObject immediately before deleting and keeps a changed object. A residual window remains (documented in gate-04-05-completion.md).
+  - Documentary pending item (Gate 4): no conflict with TD-02 (it prescribes deletion only for a size mismatch); the plan Error Catalog row UPLOAD_INVALID is out of sync and needs `/decide` (Append revision to TD-02) + an append-mode plan sync.
 
 ### SI-03.16 — URLs de reprodução e download (Verification Gates 7 e 8)
 - **Status:** pending
