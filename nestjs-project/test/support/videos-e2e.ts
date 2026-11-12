@@ -15,6 +15,7 @@ import { Channel } from '../../src/channels/entities/channel.entity';
 import { DomainExceptionFilter } from '../../src/common/filters/domain-exception.filter';
 import { ValidationExceptionFilter } from '../../src/common/filters/validation-exception.filter';
 import uploadConfig from '../../src/config/upload.config';
+import { S3_CLIENTS } from '../../src/storage/storage.constants';
 import { StorageService } from '../../src/storage/storage.service';
 import { cleanAllTables } from '../../src/test/create-test-data-source';
 import {
@@ -40,11 +41,20 @@ export interface VideosE2e {
   s3: S3Clients;
 }
 
+export interface VideosAppOptions {
+  /** Replaces the app's S3 clients (e.g. Complete routed through a fault proxy). */
+  s3Clients?: S3Clients;
+}
+
 /** Boots AppModule exactly like main.ts (pipes + filters). */
-export async function createVideosApp(): Promise<VideosE2e> {
-  const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
-  }).compile();
+export async function createVideosApp(
+  options: VideosAppOptions = {},
+): Promise<VideosE2e> {
+  const builder = Test.createTestingModule({ imports: [AppModule] });
+  if (options.s3Clients) {
+    builder.overrideProvider(S3_CLIENTS).useValue(options.s3Clients);
+  }
+  const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication<INestApplication<App>>();
   app.useGlobalPipes(
     new ValidationPipe({

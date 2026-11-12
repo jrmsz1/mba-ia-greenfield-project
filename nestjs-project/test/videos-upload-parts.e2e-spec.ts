@@ -189,9 +189,35 @@ describe('videos-upload-parts', () => {
     expect(listParts).not.toHaveBeenCalled();
   });
 
-  it.todo(
-    '2.3 control-rate-limit-is-shared-with-complete — implemented with SI-03.11 (POST /videos/:id/upload/complete)',
-  );
+  it('2.3 control-rate-limit-is-shared-with-complete', async () => {
+    const id = await startVideo();
+    // Full-length manifest for parts storage does not hold yet.
+    const parts = [1, 2, 3].map((n) => ({
+      part_number: n,
+      etag: `"${randomBytes(16).toString('hex')}"`,
+    }));
+    for (let i = 0; i < 100; i++) {
+      const res = await http()
+        .get(`/videos/${id}/upload`)
+        .set('Authorization', auth());
+      expect(res.status).toBe(200);
+    }
+    for (let i = 0; i < 20; i++) {
+      const res = await http()
+        .post(`/videos/${id}/upload/complete`)
+        .set('Authorization', auth())
+        .send({ parts });
+      expect(res.status).toBe(409);
+      expect(bodyField(res, 'error')).toBe('UPLOAD_PARTS_MISMATCH');
+    }
+
+    const res = await http()
+      .get(`/videos/${id}/upload`)
+      .set('Authorization', auth());
+
+    expect(res.status).toBe(429);
+    expect(bodyField(res, 'error')).toBe('UPLOAD_CONTROL_RATE_EXCEEDED');
+  });
 
   // 3. Cancelamento
 

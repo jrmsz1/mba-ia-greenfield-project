@@ -47,3 +47,10 @@ export interface MediaMetadata {
   bit_rate: number | null;
   size: number | null;
 }
+
+/**
+ * `Retry-After` of a pending (202) completion: a client following it makes at
+ * most 60 complete calls per hour, under the shared 120 control-call ceiling
+ * (phase-03-videos/TD-02, TD-13).
+ */
+export const COMPLETION_RETRY_AFTER_SECONDS = 60;

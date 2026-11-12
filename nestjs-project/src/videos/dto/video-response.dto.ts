@@ -66,3 +66,12 @@ export class VideoResponseDto {
   @ApiProperty({ format: 'date-time' })
   updated_at: string;
 }
+
+/** Response of POST /videos/:id/upload/complete (200 settled / 202 pending). */
+export class CompleteUploadResponseDto {
+  @ApiProperty({ example: 'aZ3kQ9bX0pL', description: 'public_id' })
+  id: string;
+
+  @ApiProperty({ enum: VIDEO_PROCESSING_STATUSES, example: 'uploaded' })
+  processing_status: VideoProcessingStatus;
+}

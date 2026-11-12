@@ -16,6 +16,7 @@ import {
 import { evaluateCompletionProof } from './completion-proof';
 import { Video } from './entities/video.entity';
 import { UploadRecoveryService } from './upload-recovery.service';
+import type { VideoProcessingStatus } from './video.constants';
 import {
   InvalidVideoStateException,
   ManifestInvalidException,
@@ -28,7 +29,7 @@ import { firstRows } from './windowed-counter';
 export interface CompletionResult {
   /** `done` → 200; `pending` → 202 with Retry-After (outcome not proven yet). */
   outcome: 'done' | 'pending';
-  processingStatus: string;
+  processingStatus: VideoProcessingStatus;
 }
 
 const PAST_UPLOAD = new Set(['uploaded', 'processing', 'ready']);
@@ -55,7 +56,27 @@ export class VideoCompletionService {
     video: Video,
     manifest: ManifestPart[],
   ): Promise<CompletionResult> {
-    const settled = await this.settledResult(video);
+    if (video.processing_status !== 'completing') {
+      return await this.run(video, manifest);
+    }
+    // Retried complete after an unknown outcome (TD-02 step 7): resolve with
+    // evidence only — never with the client's unverified manifest. When the
+    // session is still open and no object exists, the claim is released and
+    // the protocol runs again; a Complete still in flight is harmless (on the
+    // pinned build concurrent Completes give one success, NoSuchUpload for the
+    // rest, and the proof decides).
+    const outcome = await this.recovery.resolve(video.id, {
+      allowRelease: true,
+    });
+    if (outcome !== 'released') return await this.currentResult(video.id);
+    return await this.run(await this.reload(video.id), manifest);
+  }
+
+  private async run(
+    video: Video,
+    manifest: ManifestPart[],
+  ): Promise<CompletionResult> {
+    const settled = this.settledResult(video);
     if (settled) return settled;
     if (video.upload_expires_at.getTime() <= Date.now()) {
       throw new UploadExpiredException();
@@ -72,10 +93,9 @@ export class VideoCompletionService {
       stored = await this.storage.listParts(key, video.upload_id);
     } catch (error) {
       if (error instanceof UploadNotFoundError) {
-        return this.toResult(
-          await this.recovery.resolve(video.id, { manifest }),
-          video,
-        );
+        // The manifest could not be verified: resolve on storage evidence only.
+        await this.recovery.resolve(video.id);
+        return await this.currentResult(video.id);
       }
       if (error instanceof StorageError)
         throw new StorageUnavailableException();
@@ -93,7 +113,7 @@ export class VideoCompletionService {
     if (firstRows(claimed).length === 0) {
       const current = await this.reload(video.id);
       return (
-        (await this.settledResult(current, { resolveCompleting: false })) ?? {
+        this.settledResult(current) ?? {
           outcome: 'pending',
           processingStatus: current.processing_status,
         }
@@ -109,10 +129,8 @@ export class VideoCompletionService {
       );
     } catch (error) {
       if (error instanceof UploadNotFoundError) {
-        return this.toResult(
-          await this.recovery.resolve(video.id, { manifest }),
-          video,
-        );
+        await this.recovery.resolve(video.id, { manifest });
+        return await this.currentResult(video.id);
       }
       if (error instanceof StorageRejectedError) {
         // Definitive: the object was not created — release the claim.
@@ -165,18 +183,14 @@ export class VideoCompletionService {
     } else if (proof === 'contradicted') {
       await this.recovery.markInvalid(video.id, ['completing']);
     }
-    const current = await this.reload(video.id);
-    return {
-      outcome: current.processing_status === 'completing' ? 'pending' : 'done',
-      processingStatus: current.processing_status,
-    };
+    return await this.currentResult(video.id);
   }
 
-  /** 200 for a video past `uploading`, 409 for a terminal one, else null. */
-  private async settledResult(
-    video: Video,
-    options: { resolveCompleting: boolean } = { resolveCompleting: true },
-  ): Promise<CompletionResult | null> {
+  /**
+   * 200 for a video past `uploading`, 409 for a terminal one, pending for a
+   * claim held by another caller, null when the protocol must run.
+   */
+  private settledResult(video: Video): CompletionResult | null {
     if (PAST_UPLOAD.has(video.processing_status)) {
       return { outcome: 'done', processingStatus: video.processing_status };
     }
@@ -184,30 +198,23 @@ export class VideoCompletionService {
       throw new InvalidVideoStateException(video.processing_status);
     }
     if (video.processing_status === 'completing') {
-      if (options.resolveCompleting) {
-        // Repeated complete after an unknown outcome: resolve with evidence,
-        // never by releasing the claim (a Complete may still be in flight).
-        return this.toResult(await this.recovery.resolve(video.id), video);
-      }
       return { outcome: 'pending', processingStatus: 'completing' };
     }
     return null;
   }
 
-  private async toResult(
-    _outcome: unknown,
-    video: Video,
-  ): Promise<CompletionResult> {
-    const current = await this.reload(video.id);
+  /**
+   * Result from the row as it stands after a resolution: past `uploading` is
+   * `done`, a terminal row is a 409 (the contract never answers 200 for it),
+   * anything else is still `pending`.
+   */
+  private async currentResult(videoId: string): Promise<CompletionResult> {
+    const current = await this.reload(videoId);
     if (TERMINAL.has(current.processing_status)) {
-      return { outcome: 'done', processingStatus: current.processing_status };
+      throw new InvalidVideoStateException(current.processing_status);
     }
     return {
-      outcome:
-        current.processing_status === 'completing' ||
-        current.processing_status === 'uploading'
-          ? 'pending'
-          : 'done',
+      outcome: PAST_UPLOAD.has(current.processing_status) ? 'done' : 'pending',
       processingStatus: current.processing_status,
     };
   }

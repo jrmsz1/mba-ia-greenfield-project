@@ -38,4 +38,4 @@ The AWS SDK v3 does not surface an HTTP 200 with an `<Error>` body as status 200
 ## Not covered here
 
 - The HTTP mapping (`200`/`202` + `Retry-After: 60`, `409`) belongs to SI-03.11 (E2E).
-- The reconciler path for stale claims (`allowRelease`) is exercised at service level in `upload-recovery.service.integration-spec.ts`. Its scheduling belongs to SI-03.15.
+- The release of an open, objectless claim (`allowRelease`) is exercised at service level in `upload-recovery.service.integration-spec.ts`. Since SI-03.11 the retried complete also uses it (TD-02 step 7) and re-runs the protocol; E2E 3.3 covers that. The reconciler schedule belongs to SI-03.15.

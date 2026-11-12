@@ -22,8 +22,8 @@ export interface ResolveOptions {
   manifest?: ManifestPart[];
   /**
    * Allow `completing → uploading` when the upload is still open and no object
-   * exists. Only the reconciler sets it, for stale claims — a client call may
-   * race with a Complete still in flight (phase-03-videos/TD-02 step 7).
+   * exists (phase-03-videos/TD-02 step 7). Set by the retried complete — which
+   * re-runs the protocol right away — and by the reconciler for stale claims.
    */
   allowRelease?: boolean;
 }

@@ -145,7 +145,7 @@ describe('UploadRecoveryService (real PostgreSQL + MinIO)', () => {
     expect((await row(video.id)).processing_status).toBe('expired');
   });
 
-  it('keeps a completing row when the session is still open and release is not allowed (client call)', async () => {
+  it('keeps a completing row when the session is still open and release is not requested', async () => {
     const video = await started();
     await setStatus(video.id, 'completing');
 
@@ -153,7 +153,7 @@ describe('UploadRecoveryService (real PostgreSQL + MinIO)', () => {
     expect((await row(video.id)).processing_status).toBe('completing');
   });
 
-  it('releases a stale completing claim back to uploading only when the reconciler allows it', async () => {
+  it('releases a completing claim back to uploading only when release is requested', async () => {
     const video = await started();
     await setStatus(video.id, 'completing');
 

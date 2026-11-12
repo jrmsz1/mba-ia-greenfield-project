@@ -829,6 +829,124 @@
           "videos"
         ]
       }
+    },
+    "/videos/{id}/upload/complete": {
+      "post": {
+        "description": "Verifies the ordered manifest against storage, completes the multipart upload and proves the final object before enqueueing processing. 202 + Retry-After while the outcome is not proven yet. Shares a 120 calls/hour window with the upload status.",
+        "operationId": "VideosController_complete",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteUploadDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Past uploading (also a repeated call)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompleteUploadResponseDto"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Outcome not proven yet; retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "example": 60
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompleteUploadResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "VIDEO_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "UPLOAD_PARTS_MISMATCH, UPLOAD_EXPIRED or INVALID_VIDEO_STATE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "UPLOAD_CONTROL_RATE_EXCEEDED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "STORAGE_UNAVAILABLE (Retry-After)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "access-token": []
+          }
+        ],
+        "summary": "Complete the upload",
+        "tags": [
+          "videos"
+        ]
+      }
     }
   },
   "info": {
@@ -1107,6 +1225,38 @@
           "upload_expires_at",
           "parts",
           "missing_part_numbers"
+        ]
+      },
+      "CompleteUploadDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "CompleteUploadResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "aZ3kQ9bX0pL",
+            "description": "public_id"
+          },
+          "processing_status": {
+            "type": "string",
+            "enum": [
+              "uploading",
+              "completing",
+              "uploaded",
+              "processing",
+              "ready",
+              "failed",
+              "expired",
+              "cancelled"
+            ],
+            "example": "uploaded"
+          }
+        },
+        "required": [
+          "id",
+          "processing_status"
         ]
       },
       "ApiErrorEnvelope": {

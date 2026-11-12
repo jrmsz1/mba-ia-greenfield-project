@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 10/17 completed
+**SIs:** 11/17 completed
 
 ## Required Technical Verification Gates
 
@@ -123,9 +123,16 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - Fault injection is a real HTTP proxy (src/test/s3-fault-proxy.ts) in front of CompleteMultipartUpload only; the "storage unreachable" scenario uses a real client on a closed port.
 
 ### SI-03.11 — Endpoint POST /videos/:id/upload/complete
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 10 E2E passing (test/videos-upload-complete.e2e-spec.ts, from nestjs-project/specs/videos-upload-complete.plan.md) + parts spec 2.3 now implemented (todo removed) + 8 unit (complete-upload.dto.spec.ts); regression npm test 53 suites / 380, test:e2e 6 suites / 83, tsc 0, eslint baseline
+- **Observations:**
+  - All 7 ACs covered; 202 carries Retry-After: 60 (COMPLETION_RETRY_AFTER_SECONDS) and reserveControlCall runs before any storage call (3.1 asserts no listParts/complete/headObject call).
+  - Aligned the retried complete with TD-02 step 7: when the session is still open and no object exists, the claim is released and the protocol re-runs in the same call (SI-03.10 had restricted release to the reconciler, which made spec 3.3 unreachable). Safe on the pinned build: concurrent Completes give one success + NoSuchUpload, and only the proof moves the row.
+  - Safety fix: the ListParts → NoSuchUpload path no longer feeds the unverified client manifest into the proof (a wrong manifest could have "contradicted" a valid object and deleted it); only the post-verification Complete path passes the manifest.
+  - A terminal outcome of the completion (e.g. failed/UPLOAD_INVALID) now answers 409 INVALID_VIDEO_STATE, per the API contract, instead of 200.
+  - Spec 2.3 "incomplete manifest": implemented as a full-length manifest for parts storage does not hold (409 UPLOAD_PARTS_MISMATCH); a shorter manifest would be 400 by the contract.
+  - Fault injection in E2E: S3_CLIENTS overridden (createVideosApp option) so only Complete goes through the real fault proxy; proxy gained a sticky mode (failAllCompletes).
+  - openapi.json regenerated (route with 200/202/400/401/404/409/429/503). Out of scope, noted as a separate task: openapi:export runs through ts-node without the Swagger CLI plugin, so EVERY request DTO schema is exported with empty properties (pre-existing since 2953d69, e.g. RegisterDto).
 
 ### SI-03.12 — Infra: entrypoint do worker e serviço Compose `worker`
 - **Status:** pending

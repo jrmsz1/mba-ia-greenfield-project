@@ -22,6 +22,7 @@ import type { Response } from 'express';
 import type { JwtPayload } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiErrorEnvelope } from '../common/openapi/api-error-envelope.dto';
+import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { PartUrlsDto } from './dto/part-urls.dto';
 import { StartUploadDto } from './dto/start-upload.dto';
 import {
@@ -29,18 +30,21 @@ import {
   UploadStatusResponseDto,
 } from './dto/upload-status-response.dto';
 import {
+  CompleteUploadResponseDto,
   StartUploadResponseDto,
   VideoResponseDto,
 } from './dto/video-response.dto';
 import { IdempotencyKey } from './decorators/idempotency-key.decorator';
 import { IdempotencyKeyPipe } from './idempotency-key.pipe';
 import { VideoAccessPolicy } from './video-access.policy';
+import { VideoCompletionService } from './video-completion.service';
 import {
   toStartUploadResponse,
   toVideoResponse,
 } from './video-response.mapper';
 import { VideoUploadPartsService } from './video-upload-parts.service';
 import { VideoUploadService } from './video-upload.service';
+import { COMPLETION_RETRY_AFTER_SECONDS } from './video.constants';
 
 const errorEnvelope = { $ref: getSchemaPath(ApiErrorEnvelope) };
 
@@ -58,6 +62,7 @@ export class VideosController {
     private readonly uploads: VideoUploadService,
     private readonly parts: VideoUploadPartsService,
     private readonly access: VideoAccessPolicy,
+    private readonly completion: VideoCompletionService,
   ) {}
 
   @Post()
@@ -215,6 +220,70 @@ export class VideosController {
   ): Promise<UploadStatusResponseDto> {
     const video = await this.access.findOwnedVideoOrThrow(publicId, user.sub);
     return await this.parts.getUploadStatus(video);
+  }
+
+  @Post(':id/upload/complete')
+  @ApiOperation({
+    summary: 'Complete the upload',
+    description:
+      'Verifies the ordered manifest against storage, completes the multipart upload and proves the final object before enqueueing processing. 202 + Retry-After while the outcome is not proven yet. Shares a 120 calls/hour window with the upload status.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Past uploading (also a repeated call)',
+    type: CompleteUploadResponseDto,
+  })
+  @ApiResponse({
+    status: 202,
+    description: 'Outcome not proven yet; retry after Retry-After seconds',
+    type: CompleteUploadResponseDto,
+    headers: { 'Retry-After': { schema: { type: 'integer', example: 60 } } },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'VALIDATION_ERROR',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({ status: 401, description: 'Not authenticated' })
+  @ApiResponse({
+    status: 404,
+    description: 'VIDEO_NOT_FOUND',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'UPLOAD_PARTS_MISMATCH, UPLOAD_EXPIRED or INVALID_VIDEO_STATE',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'UPLOAD_CONTROL_RATE_EXCEEDED',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 503,
+    description: 'STORAGE_UNAVAILABLE (Retry-After)',
+    schema: errorEnvelope,
+  })
+  async complete(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') publicId: string,
+    @Body() dto: CompleteUploadDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<CompleteUploadResponseDto> {
+    const video = await this.access.findOwnedVideoOrThrow(publicId, user.sub);
+    // Before any storage call (phase-03-videos/TD-13).
+    await this.parts.reserveControlCall(video.id);
+    const result = await this.completion.complete(
+      video,
+      dto.parts.map((p) => ({ partNumber: p.part_number, etag: p.etag })),
+    );
+    if (result.outcome === 'pending') {
+      res.status(202).setHeader('Retry-After', COMPLETION_RETRY_AFTER_SECONDS);
+    } else {
+      res.status(200);
+    }
+    return { id: video.public_id, processing_status: result.processingStatus };
   }
 
   @Delete(':id/upload')

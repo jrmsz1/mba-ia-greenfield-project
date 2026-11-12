@@ -25,6 +25,8 @@ export interface S3FaultProxy {
   endpoint: string;
   /** Arms one action for the next CompleteMultipartUpload request. */
   failNextComplete(action: FaultAction): void;
+  /** Arms an action for EVERY Complete until called with null. */
+  failAllCompletes(action: FaultAction | null): void;
   close(): Promise<void>;
 }
 
@@ -39,6 +41,7 @@ const errorBody = (code: string): string =>
 export async function startS3FaultProxy(target: string): Promise<S3FaultProxy> {
   const upstream = new URL(target);
   let armed: FaultAction | null = null;
+  let sticky = false;
 
   const forward = (
     req: IncomingMessage,
@@ -77,7 +80,7 @@ export async function startS3FaultProxy(target: string): Promise<S3FaultProxy> {
       req.on('end', () => {
         const body = Buffer.concat(chunks);
         const action = isComplete(req) ? armed : null;
-        if (action) armed = null;
+        if (action && !sticky) armed = null;
 
         const sendError200 = (code: string) => {
           const xml = errorBody(code);
@@ -117,7 +120,12 @@ export async function startS3FaultProxy(target: string): Promise<S3FaultProxy> {
   const { port } = server.address() as { port: number };
   return {
     endpoint: `http://127.0.0.1:${port}`,
+    failAllCompletes(action) {
+      armed = action;
+      sticky = action !== null;
+    },
     failNextComplete(action) {
+      sticky = false;
       armed = action;
     },
     async close() {

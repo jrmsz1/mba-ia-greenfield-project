@@ -41,6 +41,7 @@ import { UploadRecoveryService } from './upload-recovery.service';
 import { VideoCompletionService } from './video-completion.service';
 import { VideoUploadService } from './video-upload.service';
 import {
+  InvalidVideoStateException,
   ManifestInvalidException,
   StorageUnavailableException,
   UploadPartsMismatchException,
@@ -289,9 +290,10 @@ describe('VideoCompletionService (pinned MinIO + PostgreSQL)', () => {
       `UPDATE "videos" SET "upload_binding_token" = 'someone-else' WHERE id = $1`,
       [video.id],
     );
-    const result = await completion.complete(await row(video.id), manifest);
+    await expect(
+      completion.complete(await row(video.id), manifest),
+    ).rejects.toBeInstanceOf(InvalidVideoStateException);
 
-    expect(result.processingStatus).toBe('failed');
     const failed = await row(video.id);
     expect(failed.failure_reason).toBe('UPLOAD_INVALID');
     expect(await storage.headObject(originalKey(video.id))).toBeNull();
