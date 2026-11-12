@@ -1,6 +1,6 @@
 # Verification Gates 7 and 8 — Presigned delivery (SI-03.16)
 
-**Date:** 2026-11-12 · **Refs:** phase-03-videos/TD-11 (incl. revision IC-2), TD-04, TD-12, TD-13, TD-15 · **Result:** evidence executed for every scenario — **both gates PENDING, awaiting human review**
+**Date:** 2026-11-12 · **Refs:** phase-03-videos/TD-11 (incl. revision IC-2), TD-04, TD-12, TD-13, TD-15 · **Result:** **Gate 7 PASS and Gate 8 PASS** — approved by the user 2026-11-12 on `a0da9d6` with the evidence below
 
 ## What was built
 
@@ -66,3 +66,35 @@ The ID is an identifier, not a secret, and TD-11 only forbids *permanent credent
 
 - The E2E stores random bytes, not a media fixture. Delivery never inspects content, real-media validity is Gate 6, and the API container has no FFmpeg (TD-06).
 - `expires_at` is computed from the issue instant and the TTL. SigV4 counts from `X-Amz-Date` (second resolution), so the expiry test waits `expires_at` + 1.5 s.
+
+## Resolution 2026-11-12 — AC #1 (human decision, option a)
+
+AC #1 of SI-03.16 now reads: the response never contains `S3_SECRET_ACCESS_KEY`, admin tokens or any other permanent secret. `S3_ACCESS_KEY_ID` may appear only inside the `X-Amz-Credential` parameter of the presigned URL, per AWS Signature V4. No secret credential is returned, persisted or logged.
+
+**TD check:** compatible with the current TDs, so no TD was edited. TD-04 says "the client only ever receives presigned URLs", and a SigV4 presigned URL carries the key ID by construction. TD-11 says "the response never contains permanent credentials". The plan's AC #1 and scenario 1.1 of `videos-delivery-urls.plan.md` were updated to match.
+
+**Re-verified**, on both routes (`test/videos-delivery-urls.e2e-spec.ts`, `expectNoPermanentCredentials`):
+
+| Check | Observed |
+|---|---|
+| Response properties | exactly `url` and `expires_at`; `expires_at` is a plain ISO-8601 instant |
+| `S3_SECRET_ACCESS_KEY` | absent from the body |
+| `MINIO_ROOT_PASSWORD`, the caller's bearer token, `X-Amz-Security-Token` | absent from the body |
+| `S3_ACCESS_KEY_ID` | `X-Amz-Credential` starts with it; it appears nowhere else in the body |
+| Logs | no captured line contains `X-Amz-` or `Signature=` (after every E2E test) |
+| Authorization, expiry, Range | unchanged and still passing (E2E 8/8, storage 9/9, unit 10/10) |
+
+## Risk recorded — the signing credential has administrative privileges
+
+Locally, `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` are the **MinIO root user** (`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`; `.env.example` suggests reusing them). Consequences:
+
+- every emitted URL reveals the root identity in `X-Amz-Credential`;
+- the API and the worker run with full administrative rights over the storage, and a leaked secret would be total.
+
+A presigned URL itself only grants the signed `GET` on one object until it expires.
+
+**Least-privilege alternative (not implemented; it needs authorization because it revises TD-04/TD-16):**
+
+- a dedicated MinIO user with a policy limited to `s3:GetObject` on `<bucket>/videos/*` for the public signer;
+- a separate bucket-scoped user (multipart, Head/Put/Delete on `<bucket>/videos/*`, bucket creation only if kept in the app) for the API's and worker's internal operations;
+- both created by a documented bootstrap step, with new canonical environment keys for the delivery signer.

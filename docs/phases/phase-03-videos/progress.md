@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 15/17 completed
+**SIs:** 16/17 completed
 
 ## Required Technical Verification Gates
 
@@ -15,8 +15,8 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
 | 4 | Ambiguous completion: identity and integrity proof (TD-02) | PASS — approved by the user 2026-11-12 on commit `b9a31844b054649b43a733625ef64ff29d1f53b8` (evidence: 59 tests on the real PostgreSQL + pinned MinIO, command `docker compose exec -T nestjs-api npx jest --selectProjects unit integration --testPathPatterns 'completion-proof|video-completion|upload-recovery|video-reconciler' --verbose`; regression npm test 470 + 32 skipped, test:e2e 84, worker test:media 110) | docs/phases/phase-03-videos/gate-04-05-completion.md; src/videos/video-completion.service.integration-spec.ts; src/videos/upload-recovery.service.integration-spec.ts; src/worker/video-reconciler.worker.integration-spec.ts |
 | 5 | Concurrent completions (TD-02, TD-09) | PASS — approved by the user 2026-11-12 (evidence: 5 concurrent service-level completions → one `uploaded`, one job; command `npx jest --selectProjects integration --testPathPatterns video-completion`) | docs/phases/phase-03-videos/gate-04-05-completion.md; src/videos/video-completion.service.integration-spec.ts |
 | 6 | Real media fixtures (TD-07, TD-15) | PASS — approved by the user 2026-11-12 (evidence: `docker compose run --rm --no-deps worker npm run test:media` → 65 passed, 23 integration on real FFmpeg 7.1.5) | docs/phases/phase-03-videos/gate-06-media.md; src/media/media-probe.integration-spec.ts |
-| 7 | Presigned URL expiry and renewal (TD-11) | PENDING — evidence executed 2026-11-12 on the real pinned MinIO, awaiting human review | docs/phases/phase-03-videos/gate-07-08-delivery.md; src/videos/video-delivery.storage.integration-spec.ts; test/videos-delivery-urls.e2e-spec.ts |
-| 8 | HTTP Range directly on MinIO (TD-11) | PENDING — evidence executed 2026-11-12 with URLs emitted by the API on the real Compose MinIO, awaiting human review | docs/phases/phase-03-videos/gate-07-08-delivery.md; src/videos/video-delivery.storage.integration-spec.ts; test/videos-delivery-urls.e2e-spec.ts |
+| 7 | Presigned URL expiry and renewal (TD-11) | PASS — approved by the user 2026-11-12 on commit `a0da9d6` (evidence: real pinned MinIO, TTL override 2 s test-only: 206 → 403 after expires_at → renewed URL 206 at the same byte; `npx jest --selectProjects integration --testPathPatterns video-delivery` + E2E 1.3) | docs/phases/phase-03-videos/gate-07-08-delivery.md; src/videos/video-delivery.storage.integration-spec.ts; test/videos-delivery-urls.e2e-spec.ts |
+| 8 | HTTP Range directly on MinIO (TD-11) | PASS — approved by the user 2026-11-12 on commit `a0da9d6` (evidence: URLs emitted by the API on the real Compose MinIO: 206 + Content-Range/Content-Length/Accept-Ranges with exact bytes, 416, 403 unsigned/tampered; storage suite + E2E 1.2) | docs/phases/phase-03-videos/gate-07-08-delivery.md; src/videos/video-delivery.storage.integration-spec.ts; test/videos-delivery-urls.e2e-spec.ts |
 
 ### SI-03.1 — Spike: pg-boss × TypeORM (Verification Gate 1)
 - **Status:** completed
@@ -183,10 +183,11 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - Known limitation (liveness, non-blocking, accepted 2026-11-12): a video in completing + an open multipart session + an object with a divergent/missing binding at the key stays completing until manual intervention (the reconciler counts it indeterminate each run and keeps the quota). Fail-closed by design: no destructive cleanup and no quota release without positive proof.
 
 ### SI-03.16 — URLs de reprodução e download (Verification Gates 7 e 8)
-- **Status:** pending
-- **Tests:** 10 unit (video-delivery.service.spec.ts) + 9 integration on the real pinned MinIO (video-delivery.storage.integration-spec.ts) + 8 E2E (test/videos-delivery-urls.e2e-spec.ts, spec videos-delivery-urls.plan.md + negatives); regression: nestjs-api npm test 63 passed + 2 skipped suites (492 passed + 32 skipped — the FFmpeg suites), test:e2e 7 suites / 92, worker `npm run test:media` 10 suites / 113; tsc 0; eslint baseline (implementation committed)
+- **Status:** completed
+- **Tests:** 10 unit (video-delivery.service.spec.ts) + 9 integration on the real pinned MinIO (video-delivery.storage.integration-spec.ts) + 8 E2E (test/videos-delivery-urls.e2e-spec.ts, spec videos-delivery-urls.plan.md + negatives); regression: nestjs-api npm test 63 passed + 2 skipped suites (492 passed + 32 skipped — the FFmpeg suites), test:e2e 7 suites / 92, worker `npm run test:media` 10 suites / 113; tsc 0; eslint baseline (implementation a0da9d6; AC #1 revision and credential checks in the closing commit)
 - **Observations:**
-  - NOT concluded: AC #1 ("the body contains neither S3_SECRET_ACCESS_KEY nor S3_ACCESS_KEY_ID") cannot hold literally — a SigV4 presigned URL carries the access key ID in X-Amz-Credential (confirmed on the emitted URLs). The secret never appears and the ID appears only inside X-Amz-Credential. Waiting for a human decision (restate the AC / separate read-only signing credential / STS); details in gate-07-08-delivery.md.
+  - AC #1 revised by human decision 2026-11-12 (option a): no secret key, admin token or other permanent secret in the response; S3_ACCESS_KEY_ID only inside X-Amz-Credential (AWS SigV4). Compatible with TD-04 (the client only ever receives presigned URLs) and TD-11 (no permanent credentials) — no TD change. Tested on both routes: exactly {url, expires_at}, no secret, no MinIO root password, no bearer token, no X-Amz-Security-Token, key ID only in X-Amz-Credential.
+  - Risk recorded (not changed, needs authorization): locally the signing credential IS the MinIO root user (S3_ACCESS_KEY_ID = MINIO_ROOT_USER, secret = root password), so every emitted URL reveals the root identity and the API holds admin privileges. Least-privilege alternative: a dedicated MinIO user with a read-only GetObject policy on the bucket for the public signer, and a separate bucket-scoped user for the API/worker internal operations (a TD-04/TD-16 revision).
   - ACs #2–#6 verified with executed evidence: Range 206 + Content-Range (Gate 8), 416, 403 unsigned/tampered; expiry 403 after expires_at and renewal resuming at the same byte (Gate 7); Content-Disposition attachment RFC 6266; 409 VIDEO_NOT_READY / 404 VIDEO_NOT_FOUND; 61st URL → 429, then 200 after the window.
   - TTL per kind: X-Amz-Expires 3600 (playback) / 900 (download); the expiry tests use a test-only override of 2 s.
   - The delivery slot is reserved atomically before signing (shared 60/hour window); the URL is never logged or persisted — every E2E asserts no X-Amz-/Signature= in captured logs.

@@ -22,19 +22,20 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #1
 **Source:** auto
-**Last sync:** 2026-11-12T15:17:57Z
+**Last sync:** 2026-11-12T17:18:25Z
 
 **Steps:**
   1. GET /videos/<id>/playback-url com o token do dono
     - expect: status `200` com `{ url, expires_at }` e header `Cache-Control: no-store`
     - expect: `url` contém o host de `S3_PUBLIC_ENDPOINT`
-    - expect: o corpo não contém o valor de `S3_SECRET_ACCESS_KEY` nem de `S3_ACCESS_KEY_ID`
+    - expect: o corpo não contém `S3_SECRET_ACCESS_KEY`, tokens administrativos nem qualquer segredo permanente
+    - expect: `S3_ACCESS_KEY_ID` aparece somente dentro do parâmetro `X-Amz-Credential` da `url` (AWS Signature V4)
 
 #### 1.2. range-request-served-by-storage
 
 **Covers AC:** #2
 **Source:** auto
-**Last sync:** 2026-11-12T15:17:57Z
+**Last sync:** 2026-11-12T17:18:25Z
 
 **Steps:**
   1. `fetch` da `url` emitida com `Range: bytes=0-1023`
@@ -48,7 +49,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #3
 **Source:** auto
-**Last sync:** 2026-11-12T15:17:57Z
+**Last sync:** 2026-11-12T17:18:25Z
 
 **Steps:**
   1. Com `PLAYBACK_PRESIGN_TTL_SECONDS` de override pequeno, emitir uma URL e ler `bytes=0-1023`
@@ -62,7 +63,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #4
 **Source:** auto
-**Last sync:** 2026-11-12T15:17:57Z
+**Last sync:** 2026-11-12T17:18:25Z
 
 **Steps:**
   1. GET /videos/<id>/download-url com o token do dono
@@ -78,7 +79,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #5
 **Source:** auto
-**Last sync:** 2026-11-12T15:17:57Z
+**Last sync:** 2026-11-12T17:18:25Z
 
 **Steps:**
   1. Ajustar o vídeo para `processing`; GET /videos/<id>/playback-url e GET /videos/<id>/download-url pelo dono
@@ -90,7 +91,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #6
 **Source:** auto
-**Last sync:** 2026-11-12T15:17:57Z
+**Last sync:** 2026-11-12T17:18:25Z
 
 **Steps:**
   1. Emitir 60 URLs alternando playback e download para o mesmo vídeo

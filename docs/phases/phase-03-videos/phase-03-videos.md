@@ -569,7 +569,7 @@ _Cobertura exigida dos testes de endpoint (para `/plan-test-specs`): o limite co
 
 **Acceptance criteria:**
 
-- `GET /videos/:id/playback-url` pelo dono de um vídeo `ready` retorna `200` com `{ url, expires_at }`, `Cache-Control: no-store`, e o corpo não contém `S3_SECRET_ACCESS_KEY` nem `S3_ACCESS_KEY_ID`.
+- `GET /videos/:id/playback-url` pelo dono de um vídeo `ready` retorna `200` com `{ url, expires_at }` e `Cache-Control: no-store`. A resposta nunca deve conter `S3_SECRET_ACCESS_KEY`, tokens administrativos ou qualquer segredo permanente. `S3_ACCESS_KEY_ID` pode aparecer exclusivamente dentro do parâmetro `X-Amz-Credential` da URL pré-assinada, conforme AWS Signature V4. Nenhuma credencial secreta deve ser retornada, persistida ou registrada em logs.
 - Um `GET` com `Range: bytes=0-1023` na URL emitida retorna `206` com `Content-Range: bytes 0-1023/<tamanho>` (Gate 8).
 - Com `PLAYBACK_PRESIGN_TTL_SECONDS` de override pequeno, a URL responde `403` depois de `expires_at`, e uma nova URL pedida em seguida retoma o `Range` a partir do mesmo byte (Gate 7).
 - A URL de `GET /videos/:id/download-url` responde com `Content-Disposition: attachment` contendo o nome original sanitizado.

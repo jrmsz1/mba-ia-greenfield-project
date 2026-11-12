@@ -61,6 +61,38 @@ describe('videos-delivery-urls', () => {
     return { id: video.public_id, uuid: video.id };
   };
 
+  /**
+   * AC #1 (revised 2026-11-12): no secret key, admin token or other permanent
+   * secret anywhere in the response; S3_ACCESS_KEY_ID only inside the
+   * X-Amz-Credential parameter of the presigned URL (AWS SigV4).
+   */
+  const expectNoPermanentCredentials = (res: {
+    text: string;
+    body: unknown;
+  }): void => {
+    const { accessKeyId, secretAccessKey } = storageConfig();
+    const rootPassword = process.env.MINIO_ROOT_PASSWORD ?? '';
+    // Exactly these two properties; expires_at is a plain ISO date.
+    expect(Object.keys(res.body as object).sort()).toEqual([
+      'expires_at',
+      'url',
+    ]);
+    const expiresAt = bodyField(res, 'expires_at') as string;
+    expect(new Date(expiresAt).toISOString()).toBe(expiresAt);
+    expect(secretAccessKey.length).toBeGreaterThan(0);
+    expect(res.text).not.toContain(secretAccessKey);
+    if (rootPassword) expect(res.text).not.toContain(rootPassword);
+    expect(res.text).not.toContain(owner.token);
+    expect(res.text).not.toMatch(/X-Amz-Security-Token/i);
+    const url = new URL(bodyField(res, 'url') as string);
+    expect(
+      url.searchParams.get('X-Amz-Credential')?.startsWith(`${accessKeyId}/`),
+    ).toBe(true);
+    expect(
+      res.text.replace(/X-Amz-Credential=[^&"]+/, 'X-Amz-Credential=…'),
+    ).not.toContain(accessKeyId);
+  };
+
   beforeAll(async () => {
     ctx = await createVideosApp();
     defaultPlaybackTtl = ctx.upload.playbackPresignTtlSeconds;
@@ -94,7 +126,7 @@ describe('videos-delivery-urls', () => {
 
   it('1.1 owner-gets-playback-url', async () => {
     const { id } = await readyVideo();
-    const { publicEndpoint, accessKeyId, secretAccessKey } = storageConfig();
+    const { publicEndpoint } = storageConfig();
 
     const res = await get(`/videos/${id}/playback-url`);
 
@@ -109,12 +141,7 @@ describe('videos-delivery-urls', () => {
     expect(Date.parse(bodyField(res, 'expires_at') as string)).toBeGreaterThan(
       Date.now(),
     );
-    expect(res.text).not.toContain(secretAccessKey);
-    // SigV4 carries the access key ID inside X-Amz-Credential by design; it
-    // must appear nowhere else in the body (see the SI-03.16 report).
-    expect(
-      res.text.replace(/X-Amz-Credential=[^&"]+/, 'X-Amz-Credential=…'),
-    ).not.toContain(accessKeyId);
+    expectNoPermanentCredentials(res);
   });
 
   it('1.2 range-request-served-by-storage', async () => {
@@ -176,6 +203,7 @@ describe('videos-delivery-urls', () => {
 
     expect(res.status).toBe(200);
     expect(res.headers['cache-control']).toBe('no-store');
+    expectNoPermanentCredentials(res);
     const stored = await fetchPresigned(bodyField(res, 'url') as string, {
       headers: { range: 'bytes=0-15' },
     });
