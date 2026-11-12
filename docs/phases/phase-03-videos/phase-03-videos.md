@@ -272,7 +272,7 @@ _Nota: um teste com dois canais distintos do mesmo proprietário não é constru
 ### SI-03.8 — Endpoints POST /videos e GET /videos/:id
 
 **Route:** POST /videos, GET /videos/:id
-**Test Specs:** _pending /plan-test-specs_
+**Test Specs:** see `nestjs-project/specs/videos-start-and-status.plan.md`
 **Authorization:** Authenticated (start); Owner (status) — ver §Authorization Matrix
 
 **Description:** Expõe o início do upload e o status do rascunho sobre o serviço do SI-03.7, criando o `VideosModule` e o controller com opt-out explícito de throttling.
@@ -309,7 +309,7 @@ _Cobertura exigida dos testes de endpoint (para `/plan-test-specs`): falhas e re
 ### SI-03.9 — Endpoints de partes, retomada e cancelamento
 
 **Route:** POST /videos/:id/upload/part-urls, GET /videos/:id/upload, DELETE /videos/:id/upload
-**Test Specs:** _pending /plan-test-specs_
+**Test Specs:** see `nestjs-project/specs/videos-upload-parts.plan.md`
 **Authorization:** Owner — ver §Authorization Matrix
 
 **Description:** Entrega as três operações do upload em andamento — URLs de parte reemitíveis, retomada a partir do que o storage já tem e cancelamento — com os estados permitidos de cada uma.
@@ -385,7 +385,7 @@ _Cobertura exigida dos testes de endpoint (para `/plan-test-specs`): o limite co
 ### SI-03.11 — Endpoint POST /videos/:id/upload/complete
 
 **Route:** POST /videos/:id/upload/complete
-**Test Specs:** _pending /plan-test-specs_
+**Test Specs:** see `nestjs-project/specs/videos-upload-complete.plan.md`
 **Authorization:** Owner — ver §Authorization Matrix
 
 **Description:** Expõe o serviço de conclusão do SI-03.10 com os três desfechos HTTP do protocolo (200, 202 com `Retry-After`, 409/503).
@@ -547,7 +547,7 @@ _Cobertura exigida dos testes de endpoint (para `/plan-test-specs`): o limite co
 ### SI-03.16 — URLs de reprodução e download (Verification Gates 7 e 8)
 
 **Route:** GET /videos/:id/playback-url, GET /videos/:id/download-url
-**Test Specs:** _pending /plan-test-specs_
+**Test Specs:** see `nestjs-project/specs/videos-delivery-urls.plan.md`
 **Authorization:** Owner, `ready` only — ver §Authorization Matrix
 
 **Description:** Emite URLs presignadas de streaming e download só para o dono de um vídeo `ready`, e prova no MinIO real o `Range` direto e a expiração/renovação (Gates 7 e 8).
