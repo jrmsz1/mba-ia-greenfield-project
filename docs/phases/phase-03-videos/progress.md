@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 1/17 completed
+**SIs:** 2/17 completed
 
 ## Required Technical Verification Gates
 
@@ -29,9 +29,15 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - Out of scope: pg 8.23 deprecation warning from TypeORM clearDatabase (Promise.all on one client) in the existing src/test/prepare-test-database.ts global setup; becomes an error in pg@9.
 
 ### SI-03.2 — Infra: configuração e contrato de ambiente (storage, upload, worker, fila)
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 17 passing (env.validation.spec.ts 15, phase-03.config.spec.ts 2); regression on Node 26: npm test 223 passing, test:e2e 52 passing, spike 10/10, tsc 0, eslint baseline
+- **Observations:**
+  - Runtime pinned to Node.js 26.13.1 LTS (Lithium) by tag + digest in Dockerfile.dev (user condition 1); container rebuilt; argon2 (native) and pg-boss (ESM) load.
+  - Spike re-run on Node 26: 10/10 (user condition 2, verified before SI-03.5).
+  - Defaults live once in src/config/video.constants.ts (used by Joi and the registerAs factories).
+  - .env.example keeps the four credentials empty (AC: no credential value); local .env (git-ignored) received development placeholders so the required keys validate.
+  - Existing fixture src/config/env.validation.integration-spec.ts updated with the new required credentials.
+  - nestjs-api service in compose.yaml has no environment block (it reads .env); the MinIO and worker services get theirs in SI-03.3 / SI-03.12.
 
 ### SI-03.3 — Infra: imagem MinIO fixada e serviço Compose (Verification Gate 2)
 - **Status:** pending
