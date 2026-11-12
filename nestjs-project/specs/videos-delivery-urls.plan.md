@@ -16,13 +16,13 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 ### 1. Emissão e uso das URLs
 
-**Setup:** `beforeEach` limpa as tabelas do banco de teste; o bucket de teste não é criado nem esvaziado pelos hooks (per `phase-03-videos/TD-15` e `phase-03-videos/TD-16`, revisões de 2026-11-12): o storage é acessado somente pelas identidades restritas de teste (`S3_TEST_API_*`, `S3_TEST_WORKER_*`, `S3_TEST_DELIVERY_*`), mapeadas no contexto explícito de teste, nunca por root nem pela identidade de manutenção; cada cenário cria seus próprios vídeos e faz as asserções de storage apenas pelas chaves `videos/<uuid>/…` desses vídeos, sem supor bucket vazio; aplicação montada com `Test.createTestingModule({ imports: [AppModule] }).compile()` e os pipes/filters de `main.ts`; um vídeo do dono é preparado como `ready`, com o objeto `videos/<uuid>/original` gravado no bucket de teste a partir de uma fixture válida pela identidade restrita de teste da API (mesmo perfil de produção, que permite `PutObject` em originais — limitação aceita do TD-04) e `original_filename` = `Meu vídeo.mp4`.
+**Setup:** a suíte roda no contêiner de teste efêmero `test-api` (`compose.test.yaml`, `docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm run test:e2e`; comando finito, sem restart), nunca em `nestjs-api` — o contêiner recebe só as identidades restritas de teste (`test-api.env`) e nenhuma credencial root, operacional de produção ou de manutenção, e usa apenas o banco `DB_TEST_NAME`, o bucket `S3_TEST_BUCKET` e o schema de fila `PGBOSS_TEST_SCHEMA`, sem acessar a API operacional nem compartilhar jobs com o worker operacional (per `phase-03-videos/TD-15` e `phase-03-videos/TD-16`, revisões "evaluator setup" de 2026-11-12); `beforeEach` limpa as tabelas do banco de teste; o bucket de teste não é criado nem esvaziado pelos hooks (per `phase-03-videos/TD-15` e `phase-03-videos/TD-16`, revisões de 2026-11-12): o storage é acessado somente pelas identidades restritas de teste (`S3_TEST_API_*`, `S3_TEST_WORKER_*`, `S3_TEST_DELIVERY_*`), mapeadas no contexto explícito de teste, nunca por root nem pela identidade de manutenção; cada cenário cria seus próprios vídeos e faz as asserções de storage apenas pelas chaves `videos/<uuid>/…` desses vídeos, sem supor bucket vazio; aplicação montada com `Test.createTestingModule({ imports: [AppModule] }).compile()` e os pipes/filters de `main.ts`; um vídeo do dono é preparado como `ready`, com o objeto `videos/<uuid>/original` gravado no bucket de teste a partir de uma fixture válida pela identidade restrita de teste da API (mesmo perfil de produção, que permite `PutObject` em originais — limitação aceita do TD-04) e `original_filename` = `Meu vídeo.mp4`.
 
 #### 1.1. owner-gets-playback-url
 
 **Covers AC:** #1
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. GET /videos/<id>/playback-url com o token do dono
@@ -35,7 +35,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #2
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. `fetch` da `url` emitida com `Range: bytes=0-1023`
@@ -49,7 +49,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #3
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. Com `PLAYBACK_PRESIGN_TTL_SECONDS` de override pequeno, emitir uma URL e ler `bytes=0-1023`
@@ -63,7 +63,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #4
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. GET /videos/<id>/download-url com o token do dono
@@ -80,7 +80,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #5
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. Ajustar o vídeo para `processing`; GET /videos/<id>/playback-url e GET /videos/<id>/download-url pelo dono
@@ -92,7 +92,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #6
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. Emitir 60 URLs alternando playback e download para o mesmo vídeo

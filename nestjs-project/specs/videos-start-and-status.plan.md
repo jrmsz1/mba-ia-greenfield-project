@@ -16,13 +16,13 @@ target_file: nestjs-project/test/videos-start-and-status.e2e-spec.ts
 
 ### 1. Início do upload
 
-**Setup:** `beforeEach` limpa as tabelas do banco de teste (`cleanAllTables`); o bucket de teste não é criado nem esvaziado pelos hooks (per `phase-03-videos/TD-15` e `phase-03-videos/TD-16`, revisões de 2026-11-12): o storage é acessado somente pelas identidades restritas de teste (`S3_TEST_API_*`, `S3_TEST_WORKER_*`, `S3_TEST_DELIVERY_*`), mapeadas no contexto explícito de teste, nunca por root nem pela identidade de manutenção; cada cenário cria seus próprios vídeos e faz as asserções de storage apenas pelas chaves `videos/<uuid>/…` desses vídeos, sem supor bucket vazio; a aplicação é montada com `Test.createTestingModule({ imports: [AppModule] }).compile()` e os mesmos pipes/filters de `main.ts`; dois usuários confirmados (dono e outro) obtêm access tokens via `POST /auth/login`.
+**Setup:** a suíte roda no contêiner de teste efêmero `test-api` (`compose.test.yaml`, `docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm run test:e2e`; comando finito, sem restart), nunca em `nestjs-api` — o contêiner recebe só as identidades restritas de teste (`test-api.env`) e nenhuma credencial root, operacional de produção ou de manutenção, e usa apenas o banco `DB_TEST_NAME`, o bucket `S3_TEST_BUCKET` e o schema de fila `PGBOSS_TEST_SCHEMA`, sem acessar a API operacional nem compartilhar jobs com o worker operacional (per `phase-03-videos/TD-15` e `phase-03-videos/TD-16`, revisões "evaluator setup" de 2026-11-12); `beforeEach` limpa as tabelas do banco de teste (`cleanAllTables`); o bucket de teste não é criado nem esvaziado pelos hooks (per `phase-03-videos/TD-15` e `phase-03-videos/TD-16`, revisões de 2026-11-12): o storage é acessado somente pelas identidades restritas de teste (`S3_TEST_API_*`, `S3_TEST_WORKER_*`, `S3_TEST_DELIVERY_*`), mapeadas no contexto explícito de teste, nunca por root nem pela identidade de manutenção; cada cenário cria seus próprios vídeos e faz as asserções de storage apenas pelas chaves `videos/<uuid>/…` desses vídeos, sem supor bucket vazio; a aplicação é montada com `Test.createTestingModule({ imports: [AppModule] }).compile()` e os mesmos pipes/filters de `main.ts`; dois usuários confirmados (dono e outro) obtêm access tokens via `POST /auth/login`.
 
 #### 1.1. start-creates-private-draft
 
 **Covers AC:** #1
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. POST /videos com `Authorization: Bearer <dono>`, `Idempotency-Key: k-1` e `{ "filename": "clip.mp4", "size_bytes": 10485760 }`
@@ -34,7 +34,7 @@ target_file: nestjs-project/test/videos-start-and-status.e2e-spec.ts
 
 **Covers AC:** #2
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. POST /videos com `Idempotency-Key: k-2` e um payload válido
@@ -49,7 +49,7 @@ target_file: nestjs-project/test/videos-start-and-status.e2e-spec.ts
 
 **Covers AC:** #3
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. POST /videos sem o header `Idempotency-Key`
@@ -62,7 +62,7 @@ target_file: nestjs-project/test/videos-start-and-status.e2e-spec.ts
 
 **Covers AC:** #5
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. Enviar 12 requisições POST /videos em menos de um minuto, do mesmo cliente, com chaves diferentes (cotas configuradas amplas)
@@ -73,7 +73,7 @@ target_file: nestjs-project/test/videos-start-and-status.e2e-spec.ts
 
 **Covers AC:** #6
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. POST /videos sem `Authorization`
@@ -89,7 +89,7 @@ target_file: nestjs-project/test/videos-start-and-status.e2e-spec.ts
 
 **Covers AC:** #1
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. Injetar rejeição definitiva em `CreateMultipartUpload`; POST /videos com payload válido
@@ -102,7 +102,7 @@ target_file: nestjs-project/test/videos-start-and-status.e2e-spec.ts
 
 **Covers AC:** #2
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. Injetar criação concluída no storage com resposta perdida; POST /videos com `Idempotency-Key: k-lost`
@@ -116,7 +116,7 @@ target_file: nestjs-project/test/videos-start-and-status.e2e-spec.ts
 
 **Covers AC:** #2
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. Deixar uma reserva com `upload_id = NULL` (como em 2.2); disparar 3 POST /videos simultâneos com a mesma `Idempotency-Key`
@@ -127,7 +127,7 @@ target_file: nestjs-project/test/videos-start-and-status.e2e-spec.ts
 
 **Covers AC:** #2
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. Deixar uma reserva com `upload_id = NULL`; injetar storage inacessível em `ListMultipartUploads`/`HeadObject`; repetir POST /videos com a mesma chave
@@ -142,7 +142,7 @@ target_file: nestjs-project/test/videos-start-and-status.e2e-spec.ts
 
 **Covers AC:** #4
 **Source:** auto
-**Last sync:** 2026-11-12T20:34:20Z
+**Last sync:** 2026-11-12T21:59:40Z
 
 **Steps:**
   1. GET /videos/<id> com o token do dono
