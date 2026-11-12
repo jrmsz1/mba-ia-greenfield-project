@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Header,
   HttpCode,
   Param,
   Post,
@@ -20,7 +22,12 @@ import type { Response } from 'express';
 import type { JwtPayload } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { ApiErrorEnvelope } from '../common/openapi/api-error-envelope.dto';
+import { PartUrlsDto } from './dto/part-urls.dto';
 import { StartUploadDto } from './dto/start-upload.dto';
+import {
+  PartUrlsResponseDto,
+  UploadStatusResponseDto,
+} from './dto/upload-status-response.dto';
 import {
   StartUploadResponseDto,
   VideoResponseDto,
@@ -32,6 +39,7 @@ import {
   toStartUploadResponse,
   toVideoResponse,
 } from './video-response.mapper';
+import { VideoUploadPartsService } from './video-upload-parts.service';
 import { VideoUploadService } from './video-upload.service';
 
 const errorEnvelope = { $ref: getSchemaPath(ApiErrorEnvelope) };
@@ -48,6 +56,7 @@ const errorEnvelope = { $ref: getSchemaPath(ApiErrorEnvelope) };
 export class VideosController {
   constructor(
     private readonly uploads: VideoUploadService,
+    private readonly parts: VideoUploadPartsService,
     private readonly access: VideoAccessPolicy,
   ) {}
 
@@ -131,5 +140,115 @@ export class VideosController {
   ): Promise<VideoResponseDto> {
     const video = await this.access.findOwnedVideoOrThrow(publicId, user.sub);
     return toVideoResponse(video);
+  }
+
+  @Post(':id/upload/part-urls')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({
+    summary: 'Issue presigned part URLs',
+    description:
+      'Presigned UploadPart URLs (public endpoint) for a batch of part numbers; re-requestable until the upload expires, up to 10 × expected_part_count URLs per upload.',
+  })
+  @ApiResponse({ status: 200, type: PartUrlsResponseDto })
+  @ApiResponse({
+    status: 400,
+    description: 'VALIDATION_ERROR',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({ status: 401, description: 'Not authenticated' })
+  @ApiResponse({
+    status: 404,
+    description: 'VIDEO_NOT_FOUND',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'INVALID_VIDEO_STATE or UPLOAD_EXPIRED',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'PART_URL_LIMIT_EXCEEDED',
+    schema: errorEnvelope,
+  })
+  async issuePartUrls(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') publicId: string,
+    @Body() dto: PartUrlsDto,
+  ): Promise<PartUrlsResponseDto> {
+    const video = await this.access.findOwnedVideoOrThrow(publicId, user.sub);
+    return { parts: await this.parts.issuePartUrls(video, dto.part_numbers) };
+  }
+
+  @Get(':id/upload')
+  @ApiOperation({
+    summary: 'Upload status and resume information',
+    description:
+      'Lists the parts storage already holds (number, size, ETag) and the missing part numbers. Shares a 120 calls/hour window with complete.',
+  })
+  @ApiResponse({ status: 200, type: UploadStatusResponseDto })
+  @ApiResponse({ status: 401, description: 'Not authenticated' })
+  @ApiResponse({
+    status: 404,
+    description: 'VIDEO_NOT_FOUND',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'INVALID_VIDEO_STATE',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'UPLOAD_CONTROL_RATE_EXCEEDED',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 503,
+    description: 'STORAGE_UNAVAILABLE (Retry-After)',
+    schema: errorEnvelope,
+  })
+  async uploadStatus(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') publicId: string,
+  ): Promise<UploadStatusResponseDto> {
+    const video = await this.access.findOwnedVideoOrThrow(publicId, user.sub);
+    return await this.parts.getUploadStatus(video);
+  }
+
+  @Delete(':id/upload')
+  @HttpCode(204)
+  @ApiOperation({
+    summary: 'Cancel an incomplete upload',
+    description:
+      'Aborts every multipart session of the video and marks it cancelled only after storage confirms the cleanup.',
+  })
+  @ApiResponse({
+    status: 204,
+    description: 'Cancelled (also when already cancelled)',
+  })
+  @ApiResponse({ status: 401, description: 'Not authenticated' })
+  @ApiResponse({
+    status: 404,
+    description: 'VIDEO_NOT_FOUND',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'INVALID_VIDEO_STATE',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 503,
+    description: 'STORAGE_UNAVAILABLE (Retry-After)',
+    schema: errorEnvelope,
+  })
+  async abort(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') publicId: string,
+  ): Promise<void> {
+    const video = await this.access.findOwnedVideoOrThrow(publicId, user.sub);
+    await this.parts.abort(video);
   }
 }

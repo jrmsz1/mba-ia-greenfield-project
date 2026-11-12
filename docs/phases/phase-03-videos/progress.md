@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 8/17 completed
+**SIs:** 9/17 completed
 
 ## Required Technical Verification Gates
 
@@ -102,9 +102,15 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - openapi.json regenerated (POST /videos, GET /videos/{id}).
 
 ### SI-03.9 — Endpoints de partes, retomada e cancelamento
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 10 E2E passing + 1 todo (test/videos-upload-parts.e2e-spec.ts, from nestjs-project/specs/videos-upload-parts.plan.md) + 12 unit (video-upload-parts.service.spec.ts) + 2 integration on real MinIO; regression npm test 342, test:e2e 72 + 1 todo, tsc 0, eslint baseline
+- **Observations:**
+  - All 8 ACs covered. Spec scenario 2.3 (control window shared with POST complete) is an explicit it.todo until SI-03.11 creates the complete route; SI-03.11 implements it in the same e2e file.
+  - Operations live in a new VideoUploadPartsService (plan said "add to VideoUploadService"; split for single responsibility, the plan Tests row already names video-upload-parts.service.*).
+  - PostgreSQL-only limits: part_urls_issued reserved with one conditional UPDATE (cap 10 × parts); windowed-counter.ts implements the one-hour window (control now, delivery in SI-03.16).
+  - Abort marks cancelled only when confirmUploadsGone returns aborted; a transient abort error or a ListParts that never confirms answers 503 and keeps the reservation.
+  - E2E helper now listens on an ephemeral port: supertest opened one listener per request and 25 concurrent requests reset connections.
+  - openapi.json regenerated (part-urls, upload status, abort).
 
 ### SI-03.10 — Serviço de conclusão do upload (Verification Gates 4 e 5)
 - **Status:** pending

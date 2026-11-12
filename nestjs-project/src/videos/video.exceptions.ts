@@ -136,6 +136,17 @@ export class UploadPartsMismatchException extends VideoDomainException {
   }
 }
 
+/** Out-of-range part numbers answer the standard validation envelope. */
+export class PartNumbersOutOfRangeException extends VideoDomainException {
+  constructor(expectedPartCount: number) {
+    super(
+      'VALIDATION_ERROR',
+      400,
+      `part_numbers must be between 1 and ${expectedPartCount}`,
+    );
+  }
+}
+
 export class PartUrlLimitExceededException extends VideoDomainException {
   constructor(limit: number) {
     super(

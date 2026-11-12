@@ -57,7 +57,10 @@ export async function createVideosApp(): Promise<VideosE2e> {
     new DomainExceptionFilter(),
     new ValidationExceptionFilter(),
   );
-  await app.init();
+  // Listen once on an ephemeral port: supertest then reuses this server
+  // instead of opening one listener per request (concurrent requests would
+  // otherwise race and reset connections).
+  await app.listen(0);
   return {
     app,
     dataSource: moduleRef.get(DataSource),
