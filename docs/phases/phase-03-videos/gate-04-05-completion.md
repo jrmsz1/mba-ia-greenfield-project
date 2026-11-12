@@ -1,6 +1,6 @@
 # Verification Gates 4 and 5 — Upload completion (SI-03.10)
 
-**Date:** 2026-11-12 · **Refs:** phase-03-videos/TD-02 (revision IC-1), TD-05, TD-09 · **Result:** Gate 5 PASS (approved by the user 2026-11-12) · Gate 4 PENDING — safety fix of 2026-11-12 applied and re-tested, awaiting re-review
+**Date:** 2026-11-12 · **Refs:** phase-03-videos/TD-02 (revision IC-1), TD-05, TD-09 · **Result:** Gate 5 PASS (approved by the user 2026-11-12) · Gate 4 PASS (approved by the user 2026-11-12 on `b9a3184`, after the two safety revisions below)
 
 ## Setup
 
