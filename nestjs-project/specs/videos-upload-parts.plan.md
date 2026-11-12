@@ -22,7 +22,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #1
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. POST /videos/<id>/upload/part-urls com `{ "part_numbers": [1, 2] }`
@@ -35,7 +35,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #2
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. POST /videos/<id>/upload/part-urls com `{ "part_numbers": [4] }` (fora de `1..expected_part_count`)
@@ -47,7 +47,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #4
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Ajustar `upload_expires_at` do vídeo para o passado no banco de teste; POST /videos/<id>/upload/part-urls com `{ "part_numbers": [1] }`
@@ -57,7 +57,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #5
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Para um vídeo de 2 partes, pedir URLs em lotes que somam 20 URLs
@@ -75,7 +75,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #3
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Pedir URLs das partes 1 e 3 e enviar `PUT` com o conteúdo de cada parte diretamente às URLs (fetch puro)
@@ -88,7 +88,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #8
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Fazer 120 chamadas GET /videos/<id>/upload na mesma janela
@@ -101,7 +101,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #8
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Fazer 100 chamadas GET /videos/<id>/upload e 20 chamadas POST /videos/<id>/upload/complete com manifesto incompleto
@@ -117,7 +117,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #6
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Pedir a URL da parte 2; DELETE /videos/<id>/upload
@@ -132,7 +132,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #7
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Ajustar o vídeo para `completing` no banco de teste; DELETE /videos/<id>/upload
@@ -142,7 +142,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #7
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Injetar storage inacessível; DELETE /videos/<id>/upload
@@ -153,7 +153,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #6, #7
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Injetar um primeiro `AbortMultipartUpload` com erro transitório seguido de sucesso; DELETE /videos/<id>/upload

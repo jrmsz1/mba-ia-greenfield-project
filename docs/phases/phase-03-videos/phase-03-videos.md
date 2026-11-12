@@ -3,9 +3,9 @@ kind: phase
 name: phase-03-videos
 test_specs_aware: true
 sources_mtime:
-  docs/phases/phase-03-videos/context.md: "2026-11-11T22:00:21-03:00"
-  docs/phases/phase-03-videos/library-refs.md: "2026-11-11T22:26:57-03:00"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-11T21:58:35-03:00"
+  docs/phases/phase-03-videos/context.md: "2026-11-12T11:47:31-03:00"
+  docs/phases/phase-03-videos/library-refs.md: "2026-11-12T11:47:31-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-12T11:45:37-03:00"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-11-10T20:13:08-03:00"
   docs/project-plan.md: "2026-11-10T20:13:08-03:00"
   docs/phases/phase-01-configuracao-base/context.md: "2026-11-10T20:13:08-03:00"
@@ -891,7 +891,7 @@ The four abuse limits above are code constants (`src/videos/abuse-limits.ts`), n
 | failure_reason | Trigger |
 |----------------|---------|
 | UPLOAD_LOST | Upload definitively gone (`NoSuchUpload`), no valid object, `upload_expires_at` not passed (per phase-03-videos/TD-02 revision IC-1, phase-03-videos/TD-09) |
-| UPLOAD_INVALID | The object at the video's key positively contradicts the completion proof (size differs from the declared size, or the `upload-binding` metadata differs from `upload_binding_token`); the object is deleted. A proof that merely cannot be established is **not** `UPLOAD_INVALID` — the row stays `completing` (per phase-03-videos/TD-02, phase-03-videos/TD-09) |
+| UPLOAD_INVALID | The object at the video's key positively contradicts the completion proof; in both cases below the row moves (`uploading`/`completing`) to `failed` with reason `UPLOAD_INVALID`, no `video.process` job is published and no playback/download access is ever granted. (1) **Binding missing or divergent** — the object carries no `upload-binding` or one that differs from `upload_binding_token`: its identity/authorization is unproven, so the object is **retained** (never deleted automatically) and logged for investigation and a later safe cleanup. (2) **Binding proven, size or ETag incompatible** — the object carries this upload's binding but its size differs from the declared size or its ETag contradicts the verified manifest: the object is deleted only after a re-read immediately before the delete still shows the same object (the pinned MinIO ignores `If-Match` on `DeleteObject`). (3) **Indeterminate** — a proof that merely cannot be established (`HeadObject` unavailable, storage error, no object yet) is **not** `UPLOAD_INVALID`: no deletion and no definitive transition; the row stays `completing` (per phase-03-videos/TD-02, phase-03-videos/TD-09, revisions of 2026-11-12) |
 | UNSUPPORTED_FORMAT | Probe rejects the media (not MP4-family brand, not H.264 `yuv420p`, audio not AAC, duration 0, unreadable/invalid media); permanent, no retry (per phase-03-videos/TD-07) |
 | DURATION_LIMIT_EXCEEDED | A valid, supported video whose duration exceeds `MAX_VIDEO_DURATION_SECONDS`; permanent, no retry. Functional restriction: with the default `14400`, a file within 10 GiB that lasts more than 4 h is rejected; `project-plan.md` sets only the 10 GB size limit, so this is an accepted, configurable restriction, not a scope contradiction. Formally approved by the `phase-03-videos/TD-07` revision of 2026-11-11 (decision A unchanged): a valid format that exceeds the duration limit is not an incompatible format; `UNSUPPORTED_FORMAT` stays reserved for media outside the accepted-format rule |
 | PROCESSING_FAILED | Transient processing errors exhausted the queue retries (per phase-03-videos/TD-05, phase-03-videos/TD-09) |

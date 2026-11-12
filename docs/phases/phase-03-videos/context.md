@@ -3,7 +3,7 @@ kind: phase
 name: phase-03-videos
 sources_mtime:
   docs/project-plan.md: "2026-11-10T20:13:08-03:00"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-11T21:58:35-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-12T11:45:37-03:00"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-11-10T20:13:08-03:00"
   docs/phases/phase-01-configuracao-base/context.md: "2026-11-10T20:13:08-03:00"
   docs/phases/phase-02-auth/context.md: "2026-11-10T20:13:08-03:00"
@@ -52,7 +52,7 @@ sources_mtime:
 |-----|--------|-------|-------|--------|----------|-----------|
 | phase-03-videos/TD-01 | phase | Backend | Large-file upload protocol and transport | decided | A (S3 multipart with per-part presigned URLs) | — |
 | phase-03-videos/TD-02 | phase | Backend | Upload resumability, completion and cross-system consistency | decided | A (verified client manifest) | — |
-|     └─ Last revision: 2026-11-11 — Recovery rule aligned with TD-09 (IC-1): after `NoSuchUpload` or an ambiguous… | | | | | | |
+|     └─ Last revision: 2026-11-12 — Upload-binding contradiction never deletes (Gate 4 review): when the object at… | | | | | | |
 | phase-03-videos/TD-03 | phase | Backend | S3-compatible object storage server (MinIO) | decided | A (pinned MinIO from GitHub release asset, SHA-256-verified custom image) | — |
 | phase-03-videos/TD-04 | phase | Backend | S3 client library and endpoint/signing model | decided | A (AWS SDK v3, two endpoints) | `@aws-sdk/client-s3@^3.x`, `@aws-sdk/s3-request-presigner@^3.x` |
 | phase-03-videos/TD-05 | phase | Backend | Background job queue and job-loss prevention | decided | A (pg-boss) | `pg-boss@^12.x` |
@@ -62,7 +62,7 @@ sources_mtime:
 | phase-03-videos/TD-08 | phase | Backend | Processing input access and scratch storage | decided | A (HTTP Range over presigned GET) | — |
 |     └─ Last revision: 2026-11-11 — Processing-input URL TTL key (AMB-3): the presigned GET the worker uses… | | | | | | |
 | phase-03-videos/TD-09 | phase | Backend | Video lifecycle state machine and failure handling | decided | A (orthogonal publication and processing_status) | — |
-|     └─ Last revision: 2026-11-11 — Transitions added to match the TD-02 recovery protocol (IC-1): `uploading`… | | | | | | |
+|     └─ Last revision: 2026-11-12 — UPLOAD_INVALID transitions aligned with TD-02 (IC-3): `uploading`/`completing`… | | | | | | |
 | phase-03-videos/TD-10 | phase | Backend | Unique public video identifier and storage keys | decided | A (random base62 id with unique index) | — |
 | phase-03-videos/TD-11 | phase | Backend | HTTP streaming and download delivery | decided | A (presigned GET, Range directly on storage) | — |
 |     └─ Last revision: 2026-11-11 — Distinct TTL keys (IC-2): playback URLs use `PLAYBACK_PRESIGN_TTL_SECONDS`… | | | | | | |
@@ -107,6 +107,7 @@ _Source files:_
 
 **Revisions:**
 - 2026-11-11 — Recovery rule aligned with TD-09 (IC-1): after `NoSuchUpload` or an ambiguous `CompleteMultipartUpload` outcome, a row in `uploading` or `completing` moves to `uploaded` only when the object at the video's storage key is proven to be the one this authorized upload produced — identity and integrity, not a matching size alone (this replaces "present with the declared size" in the failure matrix; the proof is Required Technical Verification Gate 4); when the upload is definitively lost, no valid object exists and `upload_expires_at` has not passed, the row moves to `failed` (`UPLOAD_LOST`); when expiry is proven (`upload_expires_at` has passed) and no valid object was completed, it moves to `expired`; a timeout, connection reset or 5xx is ambiguous and never by itself returns the row to `uploading` or marks it `failed` — it stays `completing` until the retried complete or the reconciler has evidence; compare-and-set transitions, idempotency and reconciliation are unchanged. Rationale: Revisar TD-09 e TD-02 — align the recovery matrix with the TD-09 transitions.
+- 2026-11-12 — Upload-binding contradiction never deletes (Gate 4 review): when the object at the video's key carries an upload-binding different from upload_binding_token (or none), the completion is refused as failed/UPLOAD_INVALID, no job is published, the video is never delivered, and the object is NOT deleted automatically (its identity/authorization is unproven); it is retained and logged for investigation and later safe cleanup. Deletion remains only for an object that carries this upload's binding but contradicts the declared size or the manifest ETag, after a re-read immediately before the delete (the pinned MinIO ignores If-Match on DeleteObject). Decision A unchanged.
 
 ### phase-03-videos/TD-03
 
@@ -151,6 +152,7 @@ _Source files:_
 
 **Revisions:**
 - 2026-11-11 — Transitions added to match the TD-02 recovery protocol (IC-1): `uploading` → `uploaded` when storage reports `NoSuchUpload` and the object at the video's key is proven to be this upload's (identity and integrity, not size alone), resolved by the retried complete or the reconciler; the existing `completing` → `uploaded` row requires the same identity proof instead of "the object with the declared size"; `uploading`/`completing` → `failed` (`UPLOAD_LOST`) when the upload is definitively lost, no valid object exists and `upload_expires_at` has not passed; `uploading`/`completing` → `expired` when `upload_expires_at` has passed (expiry proven) and no valid object was completed; a timeout, connection reset or 5xx causes no transition (`completing` stays `completing`: no return to `uploading`, no `failed`); every transition remains compare-and-set and idempotent. Rationale: Revisar TD-09 e TD-02 — align the transition table with the TD-02 recovery protocol.
+- 2026-11-12 — UPLOAD_INVALID transitions aligned with TD-02 (IC-3): `uploading`/`completing` → `failed` (`UPLOAD_INVALID`) when the object at the video's key carries an upload-binding different from `upload_binding_token` (or none) — no job is published, the video is never delivered, and the object is retained (not deleted automatically) for investigation and later safe cleanup; the existing `completing` → `failed` row ("size/parts invalid after complete") keeps "object deleted" only for an object that carries this upload's binding but contradicts the declared size or the manifest ETag, after a re-read immediately before the delete; compare-and-set transitions and idempotency are unchanged. Rationale: Revisar TD-09 e TD-02 — align the transition table with the 2026-11-12 TD-02 revision.
 
 ### phase-03-videos/TD-10
 
@@ -428,6 +430,7 @@ _Verbatim copy of the `**Implementation impact:**` field of each of the 16 TDs o
 _Revisions (copied from the decisions doc):_
 
 - 2026-11-11 — Recovery rule aligned with TD-09 (IC-1): after `NoSuchUpload` or an ambiguous `CompleteMultipartUpload` outcome, a row in `uploading` or `completing` moves to `uploaded` only when the object at the video's storage key is proven to be the one this authorized upload produced — identity and integrity, not a matching size alone (this replaces "present with the declared size" in the failure matrix; the proof is Required Technical Verification Gate 4); when the upload is definitively lost, no valid object exists and `upload_expires_at` has not passed, the row moves to `failed` (`UPLOAD_LOST`); when expiry is proven (`upload_expires_at` has passed) and no valid object was completed, it moves to `expired`; a timeout, connection reset or 5xx is ambiguous and never by itself returns the row to `uploading` or marks it `failed` — it stays `completing` until the retried complete or the reconciler has evidence; compare-and-set transitions, idempotency and reconciliation are unchanged. Rationale: Revisar TD-09 e TD-02 — align the recovery matrix with the TD-09 transitions.
+- 2026-11-12 — Upload-binding contradiction never deletes (Gate 4 review): when the object at the video's key carries an upload-binding different from upload_binding_token (or none), the completion is refused as failed/UPLOAD_INVALID, no job is published, the video is never delivered, and the object is NOT deleted automatically (its identity/authorization is unproven); it is retained and logged for investigation and later safe cleanup. Deletion remains only for an object that carries this upload's binding but contradicts the declared size or the manifest ETag, after a re-read immediately before the delete (the pinned MinIO ignores If-Match on DeleteObject). Decision A unchanged.
 
 ### phase-03-videos/TD-03 — S3-compatible object storage server (MinIO)
 
@@ -487,6 +490,7 @@ Duplicate/late events are ignored (zero rows); handlers produce the same outputs
 _Revisions (copied from the decisions doc):_
 
 - 2026-11-11 — Transitions added to match the TD-02 recovery protocol (IC-1): `uploading` → `uploaded` when storage reports `NoSuchUpload` and the object at the video's key is proven to be this upload's (identity and integrity, not size alone), resolved by the retried complete or the reconciler; the existing `completing` → `uploaded` row requires the same identity proof instead of "the object with the declared size"; `uploading`/`completing` → `failed` (`UPLOAD_LOST`) when the upload is definitively lost, no valid object exists and `upload_expires_at` has not passed; `uploading`/`completing` → `expired` when `upload_expires_at` has passed (expiry proven) and no valid object was completed; a timeout, connection reset or 5xx causes no transition (`completing` stays `completing`: no return to `uploading`, no `failed`); every transition remains compare-and-set and idempotent. Rationale: Revisar TD-09 e TD-02 — align the transition table with the TD-02 recovery protocol.
+- 2026-11-12 — UPLOAD_INVALID transitions aligned with TD-02 (IC-3): `uploading`/`completing` → `failed` (`UPLOAD_INVALID`) when the object at the video's key carries an upload-binding different from `upload_binding_token` (or none) — no job is published, the video is never delivered, and the object is retained (not deleted automatically) for investigation and later safe cleanup; the existing `completing` → `failed` row ("size/parts invalid after complete") keeps "object deleted" only for an object that carries this upload's binding but contradicts the declared size or the manifest ETag, after a re-read immediately before the delete; compare-and-set transitions and idempotency are unchanged. Rationale: Revisar TD-09 e TD-02 — align the transition table with the 2026-11-12 TD-02 revision.
 
 ### phase-03-videos/TD-10 — Unique public video identifier and storage keys
 

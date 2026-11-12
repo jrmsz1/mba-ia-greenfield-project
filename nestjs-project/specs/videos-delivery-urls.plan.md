@@ -22,7 +22,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #1
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. GET /videos/<id>/playback-url com o token do dono
@@ -34,7 +34,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #2
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. `fetch` da `url` emitida com `Range: bytes=0-1023`
@@ -48,7 +48,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #3
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Com `PLAYBACK_PRESIGN_TTL_SECONDS` de override pequeno, emitir uma URL e ler `bytes=0-1023`
@@ -62,7 +62,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #4
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. GET /videos/<id>/download-url com o token do dono
@@ -78,7 +78,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #5
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Ajustar o vídeo para `processing`; GET /videos/<id>/playback-url e GET /videos/<id>/download-url pelo dono
@@ -90,7 +90,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #6
 **Source:** auto
-**Last sync:** 2026-11-12T01:29:06Z
+**Last sync:** 2026-11-12T15:03:57Z
 
 **Steps:**
   1. Emitir 60 URLs alternando playback e download para o mesmo vídeo
