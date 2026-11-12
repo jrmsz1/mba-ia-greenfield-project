@@ -46,8 +46,9 @@ export class QueueLifecycleService
     await this.ensureQueue(QUEUES.VIDEO_RECONCILE, { policy: QUEUE_POLICY });
   }
 
-  async onApplicationShutdown(): Promise<void> {
+  async onApplicationShutdown(signal?: string): Promise<void> {
     await this.boss.stop({ graceful: true });
+    this.logger.log(`pg-boss stopped gracefully (${signal ?? 'close'})`);
   }
 
   private async ensureQueue(

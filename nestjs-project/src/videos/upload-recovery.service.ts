@@ -188,6 +188,26 @@ export class UploadRecoveryService {
       );
       return true;
     }
+    // Identity proven (this upload's binding). The pinned MinIO ignores
+    // `If-Match` on DeleteObject (verified 2026-11-12), so re-read right
+    // before deleting: if the object changed meanwhile it is kept.
+    const current = await this.storage.headObject(key);
+    if (
+      current === null ||
+      current.etag !== head.etag ||
+      current.uploadBinding !== head.uploadBinding
+    ) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'upload_invalid_object_changed_before_delete',
+          videoId,
+          key,
+          contradiction,
+          action: current === null ? 'already absent' : 'not deleted: changed',
+        }),
+      );
+      return true;
+    }
     await this.storage.deleteObject(key);
     return true;
   }

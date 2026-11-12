@@ -240,5 +240,26 @@ describe('UploadRecoveryService (real PostgreSQL + MinIO)', () => {
         await boss.findJobs(QUEUES.VIDEO_PROCESS, { key: video.id }),
       ).toHaveLength(0);
     });
+
+    it('does not delete when the object changes between the proof and the delete (no conditional delete on the pinned MinIO)', async () => {
+      const video = await started();
+      await objectAtKey(video, await tokenOf(video.id), 1 * MIB);
+      const real = storage.headObject.bind(
+        storage,
+      ) as StorageService['headObject'];
+      jest
+        .spyOn(storage, 'headObject')
+        .mockImplementationOnce(real)
+        .mockImplementationOnce(async (key) => {
+          const head = await real(key);
+          return head && { ...head, etag: '"replaced-meanwhile"' };
+        });
+      const deleteObject = jest.spyOn(storage, 'deleteObject');
+
+      expect(await recovery.resolve(video.id)).toBe('failed');
+
+      expect(deleteObject).not.toHaveBeenCalled();
+      expect(await storage.headObject(originalKey(video.id))).not.toBeNull();
+    });
   });
 });

@@ -55,13 +55,24 @@ function setup(overrides: Partial<DbState> = {}) {
         );
       }
       if (sql.includes('SELECT "declared_size_bytes"')) {
-        return Promise.resolve([{ declared_size_bytes: String(SIZE) }]);
+        return Promise.resolve([
+          { declared_size_bytes: String(SIZE), upload_binding_token: 't' },
+        ]);
+      }
+      if (sql.includes('FOR UPDATE')) {
+        return Promise.resolve(state.concludeApplies ? [{ id: VIDEO_ID }] : []);
       }
       return Promise.resolve(
         state.concludeApplies ? [[{ id: VIDEO_ID }], 1] : [[], 0],
       );
     }),
   };
+  Object.assign(dataSource, {
+    transaction: jest.fn(
+      async (work: (m: typeof dataSource) => Promise<unknown>) =>
+        await work(dataSource),
+    ),
+  });
   const storage = {
     headObject: jest.fn().mockResolvedValue({
       contentLength: SIZE,
@@ -228,6 +239,25 @@ describe('VideoProcessingWorker', () => {
     const t = setup({ concludeApplies: false });
 
     expect(await t.worker.process(t.job())).toBe('superseded');
+    // ...and never overwrites the thumbnail of the newer attempt.
+    expect(t.storage.putObject).not.toHaveBeenCalled();
+  });
+
+  it('refuses an original with another or a missing binding as UPLOAD_INVALID: no probe, no delete', async () => {
+    for (const uploadBinding of ['someone-else', undefined]) {
+      const t = setup();
+      t.storage.headObject.mockResolvedValue({
+        contentLength: SIZE,
+        etag: '"e-1"',
+        uploadBinding,
+      });
+
+      expect(await t.worker.process(t.job())).toBe('failed');
+      expect(t.concludedWith('failed')?.params[2]).toBe('UPLOAD_INVALID');
+      expect(t.probe.probe).not.toHaveBeenCalled();
+      expect(t.storage.presignInternalGet).not.toHaveBeenCalled();
+      expect(t.storage).not.toHaveProperty('deleteObject');
+    }
   });
 
   it('never logs or persists a presigned URL or X-Amz parameter', async () => {

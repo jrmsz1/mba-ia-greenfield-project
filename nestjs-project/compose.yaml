@@ -20,6 +20,8 @@ services:
   # It reads the same .env as the API. Run `npm run build` in nestjs-api first:
   # the worker executes the compiled dist/worker/main.worker.js.
   worker:
+    # tini as PID 1: SIGTERM is honored even before Node installs a handler.
+    init: true
     build:
       context: ./docker/worker
     volumes:

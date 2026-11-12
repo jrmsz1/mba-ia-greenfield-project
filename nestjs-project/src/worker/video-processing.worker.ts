@@ -1,9 +1,4 @@
-import {
-  Inject,
-  Injectable,
-  Logger,
-  type OnApplicationBootstrap,
-} from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { readFile } from 'node:fs/promises';
@@ -38,7 +33,8 @@ export interface ProcessJob {
 type PermanentReason =
   | typeof FAILURE_REASONS.UNSUPPORTED_FORMAT
   | typeof FAILURE_REASONS.DURATION_LIMIT_EXCEEDED
-  | typeof FAILURE_REASONS.PROCESSING_FAILED;
+  | typeof FAILURE_REASONS.PROCESSING_FAILED
+  | typeof FAILURE_REASONS.UPLOAD_INVALID;
 
 /** A permanent outcome decided during the attempt: no retry. */
 class PermanentFailure extends Error {
@@ -70,7 +66,7 @@ export type ProcessOutcome =
  *   `failed`/`PROCESSING_FAILED`.
  */
 @Injectable()
-export class VideoProcessingWorker implements OnApplicationBootstrap {
+export class VideoProcessingWorker {
   private readonly logger = new Logger(VideoProcessingWorker.name);
 
   constructor(
@@ -83,7 +79,8 @@ export class VideoProcessingWorker implements OnApplicationBootstrap {
     private readonly worker: ConfigType<typeof workerConfig>,
   ) {}
 
-  async onApplicationBootstrap(): Promise<void> {
+  /** Starts consuming; called by main.worker.ts after the shutdown hooks. */
+  async start(): Promise<void> {
     await this.boss.work(
       QUEUES.VIDEO_PROCESS,
       { localConcurrency: this.worker.concurrency, includeMetadata: true },
@@ -147,15 +144,29 @@ export class VideoProcessingWorker implements OnApplicationBootstrap {
     videoId: string,
     attempt: number,
   ): Promise<ProcessOutcome> {
-    const declared = await this.declaredSize(videoId);
+    const expected = await this.expectedOriginal(videoId);
     const key = originalKey(videoId);
     // Re-validate before touching the media: the original must still be
-    // there with the declared size, or the probe never runs.
+    // there with the declared size AND this upload's binding, or the probe
+    // never runs. A foreign or missing binding is UPLOAD_INVALID and the
+    // object is left untouched (never auto-deleted).
     const head = await this.storage.headObject(key);
-    if (head === null || head.contentLength !== declared) {
+    if (head === null) {
       throw new PermanentFailure(
         FAILURE_REASONS.PROCESSING_FAILED,
-        head === null ? 'original missing' : 'original size differs',
+        'original missing',
+      );
+    }
+    if (head.uploadBinding !== expected.bindingToken) {
+      throw new PermanentFailure(
+        FAILURE_REASONS.UPLOAD_INVALID,
+        'original binding differs or is missing',
+      );
+    }
+    if (head.contentLength !== expected.sizeBytes) {
+      throw new PermanentFailure(
+        FAILURE_REASONS.PROCESSING_FAILED,
+        'original size differs',
       );
     }
     // Fresh per attempt; never persisted, never logged.
@@ -189,15 +200,10 @@ export class VideoProcessingWorker implements OnApplicationBootstrap {
         }
         throw error;
       }
-      // Same key on every attempt: a repeated run overwrites, never adds.
-      await this.storage.putObject(
-        thumbnailKey(videoId),
-        await readFile(jpeg),
-        'image/jpeg',
-      );
-      return await this.markReady(
+      return await this.publishAndMarkReady(
         videoId,
         attempt,
+        await readFile(jpeg),
         verdict.durationSeconds,
         verdict.metadata,
       );
@@ -218,36 +224,63 @@ export class VideoProcessingWorker implements OnApplicationBootstrap {
     }
   }
 
-  private async declaredSize(videoId: string): Promise<number> {
+  private async expectedOriginal(
+    videoId: string,
+  ): Promise<{ sizeBytes: number; bindingToken: string }> {
     const result: unknown[] = await this.dataSource.query(
-      `SELECT "declared_size_bytes" FROM "videos" WHERE id = $1`,
+      `SELECT "declared_size_bytes", "upload_binding_token" FROM "videos" WHERE id = $1`,
       [videoId],
     );
-    const rows = result as { declared_size_bytes: string }[];
-    return Number(rows[0]?.declared_size_bytes);
+    const rows = result as {
+      declared_size_bytes: string;
+      upload_binding_token: string;
+    }[];
+    return {
+      sizeBytes: Number(rows[0]?.declared_size_bytes),
+      bindingToken: rows[0]?.upload_binding_token,
+    };
   }
 
-  /** Fenced on the attempt: a re-claimed video is never concluded here. */
-  private async markReady(
+  /**
+   * Thumbnail write + `processing → ready`, fenced on the attempt in ONE
+   * short transaction: the row is locked only if it still belongs to THIS
+   * attempt, so a stale attempt (re-claimed after a crash/expiry) can never
+   * overwrite the thumbnail of a newer one nor conclude the video, and a
+   * newer claim waits for this commit and then finds `ready`. The lock is
+   * held only for the small JPEG PUT — never while the media tools run.
+   */
+  private async publishAndMarkReady(
     videoId: string,
     attempt: number,
+    jpeg: Buffer,
     durationSeconds: number,
     metadata: object,
   ): Promise<ProcessOutcome> {
-    const result: unknown[] = await this.dataSource.query(
-      `UPDATE "videos"
+    const applied = await this.dataSource.transaction(async (manager) => {
+      const owned: unknown[] = await manager.query(
+        `SELECT id FROM "videos"
+          WHERE id = $1 AND "processing_status" = 'processing'
+            AND "processing_attempts" = $2
+          FOR UPDATE`,
+        [videoId, attempt],
+      );
+      if (owned.length === 0) return false;
+      // Same key on every attempt: a repeated run overwrites, never adds.
+      await this.storage.putObject(thumbnailKey(videoId), jpeg, 'image/jpeg');
+      await manager.query(
+        `UPDATE "videos"
             SET "processing_status" = 'ready',
                 "duration_seconds" = $3,
                 "media_metadata" = $4::jsonb,
                 "thumbnail_generated_at" = now(),
                 "failure_reason" = NULL
           WHERE id = $1 AND "processing_status" = 'processing'
-            AND "processing_attempts" = $2
-          RETURNING id`,
-      [videoId, attempt, durationSeconds, JSON.stringify(metadata)],
-    );
-    const rows = firstRows(result);
-    return this.concluded(rows.length > 0, 'ready', videoId, attempt);
+            AND "processing_attempts" = $2`,
+        [videoId, attempt, durationSeconds, JSON.stringify(metadata)],
+      );
+      return true;
+    });
+    return this.concluded(applied, 'ready', videoId, attempt);
   }
 
   private async fail(

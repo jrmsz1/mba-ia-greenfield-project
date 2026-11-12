@@ -27,6 +27,8 @@ import { MediaModule } from '../media/media.module';
 import { runTool } from '../media/process-runner';
 import { PGBOSS, QUEUES, VIDEO_PROCESS_RETRY } from '../queue/queue.constants';
 import { QueueModule } from '../queue/queue.module';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { UPLOAD_BINDING_METADATA_KEY } from '../storage/storage.constants';
 import { originalKey, thumbnailKey } from '../storage/storage-key';
 import { StorageModule } from '../storage/storage.module';
 import { StorageService } from '../storage/storage.service';
@@ -102,8 +104,15 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
     throw new Error('jobs not completed in time');
   };
 
-  /** An `uploaded` video whose original is the given fixture (or absent). */
-  const uploadedVideo = async (fixture: string | null): Promise<string> => {
+  /**
+   * An `uploaded` video whose original is the given fixture (or absent),
+   * stored like a completed multipart upload: with this upload's binding
+   * metadata, unless `binding` overrides it.
+   */
+  const uploadedVideo = async (
+    fixture: string | null,
+    binding?: string,
+  ): Promise<string> => {
     const body = fixture ? await readFile(join(fixtures, fixture)) : null;
     const video = await dataSource.getRepository(Video).save(
       dataSource.getRepository(Video).create({
@@ -117,7 +126,18 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
       }),
     );
     if (body) {
-      await storage.putObject(originalKey(video.id), body, 'video/mp4');
+      await s3.internal.send(
+        new PutObjectCommand({
+          Bucket: storage.bucket,
+          Key: originalKey(video.id),
+          Body: body,
+          ContentType: 'video/mp4',
+          Metadata: {
+            [UPLOAD_BINDING_METADATA_KEY]:
+              binding ?? video.upload_binding_token,
+          },
+        }),
+      );
     }
     return video.id;
   };
@@ -158,7 +178,8 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
       providers: [VideoProcessingWorker],
     }).compile();
     app = moduleRef.createNestApplication();
-    await app.init(); // boss.start + work() registration
+    await app.init(); // boss.start
+    await app.get(VideoProcessingWorker).start(); // work() registration, as main.worker.ts
     dataSource = app.get(DataSource);
     boss = app.get<PgBoss>(PGBOSS);
     storage = app.get(StorageService);
@@ -299,6 +320,7 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
 
   it('a stale attempt re-claimed during processing cannot conclude the video', async () => {
     const id = await uploadedVideo('h264-no-audio.mp4');
+    const put = jest.spyOn(storage, 'putObject');
     const real = probe.probe.bind(probe) as FfprobeRunner['probe'];
     jest.spyOn(probe, 'probe').mockImplementationOnce(async (input) => {
       // Another worker re-claims the video while this attempt is running.
@@ -316,7 +338,27 @@ describeMedia('VideoProcessingWorker (real pg-boss + MinIO + FFmpeg)', () => {
       processing_status: 'processing',
       processing_attempts: 2,
     });
+    // The stale attempt never writes (or overwrites) the thumbnail.
+    expect(put).not.toHaveBeenCalled();
+    expect(await storage.headObject(thumbnailKey(id))).toBeNull();
     expect(logs.some((l) => l.includes('processing_superseded'))).toBe(true);
+  });
+
+  it('refuses an original carrying another upload binding as UPLOAD_INVALID, without probing or deleting it', async () => {
+    const id = await uploadedVideo('h264-no-audio.mp4', 'foreign-binding');
+    const spy = jest.spyOn(probe, 'probe');
+    const del = jest.spyOn(storage, 'deleteObject');
+    await send(id);
+
+    const video = await waitFor(id);
+
+    expect(video).toMatchObject({
+      processing_status: 'failed',
+      failure_reason: 'UPLOAD_INVALID',
+    });
+    expect(spy).not.toHaveBeenCalled();
+    expect(del).not.toHaveBeenCalled();
+    expect(await storage.headObject(originalKey(id))).not.toBeNull();
   });
 
   it('holds no open transaction while the media tools run', async () => {

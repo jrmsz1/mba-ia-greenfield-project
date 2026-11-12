@@ -68,3 +68,13 @@ The AWS SDK v3 does not surface an HTTP 200 with an `<Error>` body as status 200
 **Governed document out of sync (not edited by hand):** the plan's Error Catalog row `UPLOAD_INVALID` (`phase-03-videos.md`) still says "the object is deleted" for both causes. The TDs only prescribe deletion for a size contradiction, which is still honored. The catalog row needs syncing through the formal procedure, e.g. `/decide` with an Append revision to TD-02 and `/plan-build` append-mode.
 
 **Follow-up for SI-03.15 (reaper):** the reaper must not delete originals of `failed`/`UPLOAD_INVALID` videos whose object was retained for a binding contradiction.
+
+## Addendum 2026-11-12 — delete safety under concurrent change (SI-03.15 review, item 4)
+
+- **Conditional delete is not available.** The pinned MinIO accepted `DeleteObject` with a wrong `If-Match` ETag and removed the object (probe against the test bucket, 2026-11-12). A conditional delete therefore cannot be relied on.
+- **Who can write `videos/<id>/original`?** Only this video's own `CompleteMultipartUpload`. Part URLs sign `UploadPart` only, and no `PutObject` URL is ever issued for an original. Deletion happens only when identity is proven (this upload's binding), on a row already moved to `failed`.
+- **Re-check right before deleting:** `markInvalid` reads `HeadObject` again. If the ETag or the binding changed, the object is kept and `upload_invalid_object_changed_before_delete` is logged. Test: `upload-recovery.service.integration-spec.ts` → "does not delete when the object changes between the proof and the delete".
+- **Residual window:** the interval between that re-check and the `DeleteObject` call stays open (no conditional delete). This is accepted given the absence of any other writer and recorded as a known limitation.
+- **Worker:** `VideoProcessingWorker` now also refuses an original whose binding differs or is missing (`UPLOAD_INVALID`, no probe, no delete). That covers verification item 1.
+
+**Documentary status:** TD-02 prescribes deletion only for a size mismatch (failure matrix), and TD-09 only for "size/parts invalid", so there is no conflict between TD-02 and the implementation. The plan's Error Catalog row `UPLOAD_INVALID` still says the object is deleted in both cases. It needs syncing via `/decide` (Append revision to TD-02) followed by an append-mode plan sync. Not done by hand.
