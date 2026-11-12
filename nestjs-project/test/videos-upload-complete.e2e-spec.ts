@@ -337,4 +337,26 @@ describe('videos-upload-complete', () => {
     expect(bodyField(res, 'processing_status')).toBe('uploaded');
     expect(await jobsFor(id)).toHaveLength(1);
   });
+
+  // 4. Concurrent HTTP completions (Gate 5, final regression)
+
+  it('4.1 five-concurrent-http-completions', async () => {
+    const { id, parts } = await uploadedVideo();
+
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () => complete(id, parts)),
+    );
+
+    const statuses = responses.map((r) => r.status);
+    expect(statuses.every((s) => s === 200 || s === 202)).toBe(true);
+    expect(statuses).toContain(200);
+    for (const res of responses) {
+      expect(bodyField(res, 'processing_status')).toMatch(
+        /^(uploaded|completing)$/,
+      );
+      if (res.status === 202) expect(res.headers['retry-after']).toBe('60');
+    }
+    expect((await row(id)).processing_status).toBe('uploaded');
+    expect(await jobsFor(id)).toHaveLength(1);
+  });
 });
