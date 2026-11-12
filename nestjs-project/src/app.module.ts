@@ -14,6 +14,7 @@ import uploadConfig from './config/upload.config';
 import workerConfig from './config/worker.config';
 import swaggerConfig from './config/swagger.config';
 import { envValidationSchema } from './config/env.validation';
+import { VideosModule } from './videos/videos.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { envValidationSchema } from './config/env.validation';
       }),
     }),
     AuthModule,
+    VideosModule,
   ],
   controllers: [AppController],
   providers: [AppService],

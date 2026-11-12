@@ -438,6 +438,166 @@
           "auth"
         ]
       }
+    },
+    "/videos": {
+      "post": {
+        "description": "Creates the private draft and its S3 multipart upload. Replaying the same Idempotency-Key with the same payload returns the same video (200).",
+        "operationId": "VideosController_start",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1..128 printable ASCII characters, unique per channel",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartUploadDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replay",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartUploadResponseDto"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartUploadResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR or UPLOAD_SIZE_EXCEEDED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "CHANNEL_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_CONFLICT or UPLOAD_START_IN_PROGRESS (Retry-After)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "ACTIVE_UPLOAD_LIMIT_EXCEEDED, PENDING_UPLOAD_QUOTA_EXCEEDED or UPLOAD_START_RATE_EXCEEDED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "STORAGE_UNAVAILABLE (Retry-After)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "access-token": []
+          }
+        ],
+        "summary": "Start a video upload",
+        "tags": [
+          "videos"
+        ]
+      }
+    },
+    "/videos/{id}": {
+      "get": {
+        "operationId": "VideosController_findOne",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "VIDEO_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "access-token": []
+          }
+        ],
+        "summary": "Owner-only status of a draft video",
+        "tags": [
+          "videos"
+        ]
+      }
     }
   },
   "info": {
@@ -480,6 +640,136 @@
       "ResetPasswordDto": {
         "type": "object",
         "properties": {}
+      },
+      "StartUploadDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "StartUploadResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "aZ3kQ9bX0pL",
+            "description": "public_id"
+          },
+          "upload_id": {
+            "type": "string"
+          },
+          "part_size_bytes": {
+            "type": "number",
+            "example": 67108864
+          },
+          "expected_part_count": {
+            "type": "number",
+            "example": 160
+          },
+          "upload_expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "processing_status": {
+            "type": "string",
+            "enum": [
+              "uploading",
+              "completing",
+              "uploaded",
+              "processing",
+              "ready",
+              "failed",
+              "expired",
+              "cancelled"
+            ],
+            "example": "uploading"
+          },
+          "publication": {
+            "type": "string",
+            "enum": [
+              "draft"
+            ],
+            "example": "draft"
+          }
+        },
+        "required": [
+          "id",
+          "upload_id",
+          "part_size_bytes",
+          "expected_part_count",
+          "upload_expires_at",
+          "processing_status",
+          "publication"
+        ]
+      },
+      "VideoResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "aZ3kQ9bX0pL",
+            "description": "public_id"
+          },
+          "publication": {
+            "type": "string",
+            "enum": [
+              "draft"
+            ]
+          },
+          "processing_status": {
+            "type": "string",
+            "enum": [
+              "uploading",
+              "completing",
+              "uploaded",
+              "processing",
+              "ready",
+              "failed",
+              "expired",
+              "cancelled"
+            ]
+          },
+          "failure_reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "original_filename": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "number"
+          },
+          "duration_seconds": {
+            "type": "number",
+            "nullable": true
+          },
+          "media_metadata": {
+            "type": "object",
+            "nullable": true
+          },
+          "has_thumbnail": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "publication",
+          "processing_status",
+          "failure_reason",
+          "original_filename",
+          "size_bytes",
+          "duration_seconds",
+          "media_metadata",
+          "has_thumbnail",
+          "created_at",
+          "updated_at"
+        ]
       },
       "ApiErrorEnvelope": {
         "type": "object",

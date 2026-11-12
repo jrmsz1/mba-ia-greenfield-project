@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 7/17 completed
+**SIs:** 8/17 completed
 
 ## Required Technical Verification Gates
 
@@ -91,9 +91,15 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - Storage-failure branches are tested in integration with jest.spyOn on StorageService (compensation-logic rule); the unit spec covers the pre-database size check.
 
 ### SI-03.8 — Endpoints POST /videos e GET /videos/:id
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 10 E2E passing (test/videos-start-and-status.e2e-spec.ts, from nestjs-project/specs/videos-start-and-status.plan.md, 10/10 scenarios) + 4 unit (video-response.mapper, videos.module) + filter Retry-After unit; regression npm test 328, test:e2e 62, tsc 0, eslint baseline
+- **Observations:**
+  - All 6 ACs covered (201/200 replay, 400 VALIDATION_ERROR / UPLOAD_SIZE_EXCEEDED, owner 200 vs 404, 12 starts in < 1 min with no throttler 429, 401 without token).
+  - Bug found by the E2E: @Headers(name, pipe) does not run pipes in NestJS, so the Idempotency-Key was never validated (500 on a missing header). Fixed with a custom @IdempotencyKey(IdempotencyKeyPipe) param decorator.
+  - DomainExceptionFilter (common) now sets Retry-After when a domain exception carries retryAfterSeconds (needed by the 503/409 contracts); existing behavior unchanged, unit-tested.
+  - Test isolation: setup-test-env also rewrites S3_BUCKET to S3_TEST_BUCKET (the StorageModule bucket bootstrap runs on every AppModule boot now).
+  - Spec group 2 says StorageService overridden via overrideProvider; implemented with jest.spyOn on the app StorageService delegating to real MinIO (same fault injection, no extra module).
+  - openapi.json regenerated (POST /videos, GET /videos/{id}).
 
 ### SI-03.9 — Endpoints de partes, retomada e cancelamento
 - **Status:** pending
