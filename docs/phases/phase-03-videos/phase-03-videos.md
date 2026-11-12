@@ -4,7 +4,7 @@ name: phase-03-videos
 test_specs_aware: true
 sources_mtime:
   docs/phases/phase-03-videos/context.md: "2026-11-11T22:00:21-03:00"
-  docs/phases/phase-03-videos/library-refs.md: "2026-11-11T20:36:03-03:00"
+  docs/phases/phase-03-videos/library-refs.md: "2026-11-11T22:26:57-03:00"
   docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-11T21:58:35-03:00"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-11-10T20:13:08-03:00"
   docs/project-plan.md: "2026-11-10T20:13:08-03:00"
