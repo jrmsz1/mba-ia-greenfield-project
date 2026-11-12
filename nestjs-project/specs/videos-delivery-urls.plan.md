@@ -16,26 +16,26 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 ### 1. Emissão e uso das URLs
 
-**Setup:** `beforeEach` limpa as tabelas do banco de teste e esvazia `S3_TEST_BUCKET`; aplicação montada com `Test.createTestingModule({ imports: [AppModule] }).compile()` e os pipes/filters de `main.ts`; um vídeo do dono é preparado como `ready`, com o objeto `videos/<uuid>/original` gravado no bucket de teste a partir de uma fixture válida e `original_filename` = `Meu vídeo.mp4`.
+**Setup:** `beforeEach` limpa as tabelas do banco de teste; o bucket de teste não é criado nem esvaziado pelos hooks (per `phase-03-videos/TD-15` e `phase-03-videos/TD-16`, revisões de 2026-11-12): o storage é acessado somente pelas identidades restritas de teste (`S3_TEST_API_*`, `S3_TEST_WORKER_*`, `S3_TEST_DELIVERY_*`), mapeadas no contexto explícito de teste, nunca por root nem pela identidade de manutenção; cada cenário cria seus próprios vídeos e faz as asserções de storage apenas pelas chaves `videos/<uuid>/…` desses vídeos, sem supor bucket vazio; aplicação montada com `Test.createTestingModule({ imports: [AppModule] }).compile()` e os pipes/filters de `main.ts`; um vídeo do dono é preparado como `ready`, com o objeto `videos/<uuid>/original` gravado no bucket de teste a partir de uma fixture válida pela identidade restrita de teste da API (mesmo perfil de produção, que permite `PutObject` em originais — limitação aceita do TD-04) e `original_filename` = `Meu vídeo.mp4`.
 
 #### 1.1. owner-gets-playback-url
 
 **Covers AC:** #1
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. GET /videos/<id>/playback-url com o token do dono
     - expect: status `200` com `{ url, expires_at }` e header `Cache-Control: no-store`
     - expect: `url` contém o host de `S3_PUBLIC_ENDPOINT`
     - expect: o corpo não contém `S3_SECRET_ACCESS_KEY`, tokens administrativos nem qualquer segredo permanente
-    - expect: `S3_ACCESS_KEY_ID` aparece somente dentro do parâmetro `X-Amz-Credential` da `url` (AWS Signature V4)
+    - expect: o único identificador de credencial na `url` é o ID da identidade de entrega (`S3_TEST_DELIVERY_ACCESS_KEY_ID` no teste), dentro do parâmetro `X-Amz-Credential` (AWS Signature V4); o ID da identidade da API e o ID root não aparecem na `url` nem no corpo (per `phase-03-videos/TD-04` revisão de 2026-11-12; SI-03.16 R-AC1)
 
 #### 1.2. range-request-served-by-storage
 
 **Covers AC:** #2
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. `fetch` da `url` emitida com `Range: bytes=0-1023`
@@ -49,7 +49,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #3
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Com `PLAYBACK_PRESIGN_TTL_SECONDS` de override pequeno, emitir uma URL e ler `bytes=0-1023`
@@ -63,11 +63,12 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #4
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. GET /videos/<id>/download-url com o token do dono
     - expect: status `200` com `{ url, expires_at }` e `Cache-Control: no-store`
+    - expect: o `X-Amz-Credential` da `url` traz o ID da identidade de entrega, não o da API nem o root (SI-03.16 R-AC1)
   2. `fetch` da `url`
     - expect: header `Content-Disposition` com `attachment` e o nome sanitizado codificado por RFC 6266 (`filename*=UTF-8''Meu%20v%C3%ADdeo.mp4`)
 
@@ -79,7 +80,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #5
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Ajustar o vídeo para `processing`; GET /videos/<id>/playback-url e GET /videos/<id>/download-url pelo dono
@@ -91,7 +92,7 @@ O dono de um vídeo `ready` obtém URLs presignadas no endpoint público do stor
 
 **Covers AC:** #6
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Emitir 60 URLs alternando playback e download para o mesmo vídeo

@@ -16,13 +16,13 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 ### 1. URLs de parte
 
-**Setup:** `beforeEach` limpa as tabelas do banco de teste e esvazia `S3_TEST_BUCKET`; aplicação montada com `Test.createTestingModule({ imports: [AppModule] }).compile()` e os pipes/filters de `main.ts`; o dono faz login e cria um vídeo por POST /videos com `size_bytes` igual a 3 partes de `UPLOAD_PART_SIZE_BYTES` (override pequeno, ≥ 5 MiB).
+**Setup:** `beforeEach` limpa as tabelas do banco de teste; o bucket de teste não é criado nem esvaziado pelos hooks (per `phase-03-videos/TD-15` e `phase-03-videos/TD-16`, revisões de 2026-11-12): o storage é acessado somente pelas identidades restritas de teste (`S3_TEST_API_*`, `S3_TEST_WORKER_*`, `S3_TEST_DELIVERY_*`), mapeadas no contexto explícito de teste, nunca por root nem pela identidade de manutenção; cada cenário cria seus próprios vídeos e faz as asserções de storage apenas pelas chaves `videos/<uuid>/…` desses vídeos, sem supor bucket vazio; aplicação montada com `Test.createTestingModule({ imports: [AppModule] }).compile()` e os pipes/filters de `main.ts`; o dono faz login e cria um vídeo por POST /videos com `size_bytes` igual a 3 partes de `UPLOAD_PART_SIZE_BYTES` (override pequeno, ≥ 5 MiB).
 
 #### 1.1. issue-part-urls-batch
 
 **Covers AC:** #1
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. POST /videos/<id>/upload/part-urls com `{ "part_numbers": [1, 2] }`
@@ -30,12 +30,13 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
     - expect: cada `expires_at` cerca de `UPLOAD_PART_PRESIGN_TTL_SECONDS` à frente do momento da requisição
     - expect: header `Cache-Control: no-store`
     - expect: cada `url` contém o host de `S3_PUBLIC_ENDPOINT`
+    - expect: o `X-Amz-Credential` de cada `url` traz o ID da identidade da API em uso (`S3_TEST_API_ACCESS_KEY_ID` no teste), nunca o da identidade de entrega nem o ID root (per `phase-03-videos/TD-04` revisão de 2026-11-12; SI-03.4 R-AC2)
 
 #### 1.2. invalid-part-numbers-rejected
 
 **Covers AC:** #2
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. POST /videos/<id>/upload/part-urls com `{ "part_numbers": [4] }` (fora de `1..expected_part_count`)
@@ -47,7 +48,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #4
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Ajustar `upload_expires_at` do vídeo para o passado no banco de teste; POST /videos/<id>/upload/part-urls com `{ "part_numbers": [1] }`
@@ -57,7 +58,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #5
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Para um vídeo de 2 partes, pedir URLs em lotes que somam 20 URLs
@@ -75,7 +76,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #3
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Pedir URLs das partes 1 e 3 e enviar `PUT` com o conteúdo de cada parte diretamente às URLs (fetch puro)
@@ -88,7 +89,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #8
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Fazer 120 chamadas GET /videos/<id>/upload na mesma janela
@@ -101,7 +102,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #8
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Fazer 100 chamadas GET /videos/<id>/upload e 20 chamadas POST /videos/<id>/upload/complete com manifesto incompleto
@@ -117,7 +118,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #6
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Pedir a URL da parte 2; DELETE /videos/<id>/upload
@@ -132,7 +133,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #7
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Ajustar o vídeo para `completing` no banco de teste; DELETE /videos/<id>/upload
@@ -142,7 +143,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #7
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Injetar storage inacessível; DELETE /videos/<id>/upload
@@ -153,7 +154,7 @@ Durante um upload, o dono pede URLs presignadas de `UploadPart` em lotes (`POST 
 
 **Covers AC:** #6, #7
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Injetar um primeiro `AbortMultipartUpload` com erro transitório seguido de sucesso; DELETE /videos/<id>/upload

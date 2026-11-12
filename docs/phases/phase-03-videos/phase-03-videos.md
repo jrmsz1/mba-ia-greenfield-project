@@ -3,9 +3,9 @@ kind: phase
 name: phase-03-videos
 test_specs_aware: true
 sources_mtime:
-  docs/phases/phase-03-videos/context.md: "2026-11-12T11:47:31-03:00"
-  docs/phases/phase-03-videos/library-refs.md: "2026-11-12T11:47:31-03:00"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-12T11:45:37-03:00"
+  docs/phases/phase-03-videos/context.md: "2026-11-12T17:24:51-03:00"
+  docs/phases/phase-03-videos/library-refs.md: "2026-11-12T17:24:51-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-12T17:24:51-03:00"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-11-10T20:13:08-03:00"
   docs/project-plan.md: "2026-11-10T20:13:08-03:00"
   docs/phases/phase-01-configuracao-base/context.md: "2026-11-10T20:13:08-03:00"
@@ -19,6 +19,25 @@ sources_mtime:
 ## Objective
 
 Deliver, in `nestjs-project/` only, the "Upload e Processamento de Vídeos" phase — serviço de armazenamento de arquivos (vídeos e thumbnails), serviço de processamento em segundo plano (filas), upload de vídeos com suporte a arquivos de até 10GB sem impacto na performance, pré-cadastro automático do vídeo como rascunho ao iniciar o upload, processamento automático do vídeo após upload (extração de duração e metadados), geração automática de thumbnail a partir de um frame do vídeo, URL única por vídeo, reprodução via streaming e download do vídeo pelo usuário — so that upload de até 10GB, processamento automático, streaming and unique URLs work end to end, with every video kept as a private draft (publication and public visibility belong to Phase 04).
+
+### Revisão 2026-11-12 — identidades de storage com menor privilégio
+
+_Sincronização pontual com as revisões de 2026-11-12 de `phase-03-videos/TD-03`, `TD-04`, `TD-15` e `TD-16` (IC-4, IC-5, AMB-4; `validation.md` clean). Os 17 SIs, suas dependências, os critérios de aceite não afetados e os oito gates são preservados. O histórico de conclusão dos SI-03.1–03.16 continua em `progress.md`; os SIs afetados recebem um bloco **Revisão 2026-11-12** com ações, testes e critérios **pendentes** (ainda não implementados), e as ações/ACs originais substituídos ficam marcados, não apagados._
+
+Regras da revisão (valem para todos os SIs):
+
+1. **Provisionamento:** o contêiner administrativo efêmero (imagem `sha256:b38b632352ee75b12d3072e648a78c6a68ddc4b484cb0f7822ea3b09d9074ef2`, base `debian:12-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc`, `mc` `RELEASE.2025-08-13T08-35-41Z` verificado por SHA-256 `01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891`) cria e valida `S3_BUCKET` e `S3_TEST_BUCKET`, as políticas e as identidades, de forma idempotente e fail-closed: valida tudo antes de escrever, cria só o que falta e nunca apaga, recria, sobrescreve nem rotaciona segredos; é o único lugar onde `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` são usados; não é serviço Compose (per `phase-03-videos/TD-03`, `phase-03-videos/TD-16`).
+2. **Sem `CreateBucket` nos processos:** API e worker só verificam existência e acessibilidade do bucket com `HeadBucket` na inicialização e falham imediatamente caso contrário (per `phase-03-videos/TD-03`).
+3. **Identidades distintas:** API, worker e delivery signer usam identidades MinIO separadas, com os perfis de permissão do TD-04; `nestjs-api` recebe `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` de `S3_API_*` e `S3_DELIVERY_*`; `worker` recebe `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` de `S3_WORKER_*`; nenhum dos dois recebe `MINIO_ROOT_*` (per `phase-03-videos/TD-04`, `phase-03-videos/TD-16`).
+4. **Assinaturas:** URLs de `UploadPart` são assinadas pela identidade da API; URLs de reprodução e download, pela identidade read-only de entrega; o GET interno do worker, pela identidade do worker (per `phase-03-videos/TD-04`).
+5. **Identidades de teste:** as suítes usam identidades exclusivas de `S3_TEST_BUCKET` (`S3_TEST_API_*`, `S3_TEST_WORKER_*`, `S3_TEST_DELIVERY_*`) com os mesmos perfis restritos de produção; as identidades de produção não recebem acesso adicional (per `phase-03-videos/TD-15`, `phase-03-videos/TD-16`).
+6. **Credenciais `S3_TEST_*`:** disponíveis só aos processos de teste, mapeadas para os clientes por processo apenas no contexto explícito de execução de teste; nunca lidas pela inicialização de produção nem usadas como fallback (per `phase-03-videos/TD-16`).
+7. **Manutenção externa:** a preparação extraordinária de fixtures e a limpeza de objetos de `S3_TEST_BUCKET` rodam no contêiner efêmero de manutenção, com `S3_TEST_MAINTENANCE_*`, antes e/ou depois das execuções de suíte e nunca em paralelo a elas; antes de qualquer remoção, ele verifica positivamente o alvo, a separação de `S3_BUCKET` e o contexto de teste, e falha fechado (per `phase-03-videos/TD-15`, `phase-03-videos/TD-16`).
+8. **Sem limpeza privilegiada nos hooks:** nenhum `beforeAll`/`beforeEach`/`afterEach`/`afterAll`, `globalSetup` ou `globalTeardown` executado em `nestjs-api` ou `worker` esvazia o bucket, remove objetos de outros testes, aborta sessões de outros testes ou cria buckets; as credenciais de manutenção nunca entram nesses contêineres.
+9. **Isolamento por teste:** cada teste isola os objetos que cria por chaves exclusivas (`videos/<uuid>/…` de um vídeo criado pelo próprio teste) e nunca depende de um bucket globalmente vazio; asserções sobre o storage são feitas pela chave do vídeo do teste, nunca por listagem global do bucket.
+10. **Resets de banco e fila:** os resets do PostgreSQL (`DB_TEST_NAME`) e do schema de fila (`PGBOSS_TEST_SCHEMA`) permanecem como estão, restritos aos ambientes de teste e protegidos pelos guards existentes.
+11. **Pré-requisito do SI-03.17:** provisionamento, identidades, migração controlada do ambiente e regressão de permissões e dos gates afetados (4, 5, 6, 7, 8 e a suíte do reconciliador) devem estar implementados e aprovados antes de iniciar o SI-03.17.
+12. **Limitações comprovadas pelo spike (aceitas, sem isolamento maior que o demonstrado):** (a) a identidade da API consegue um `PUT` convencional de um original (`s3:PutObject` cobre também multipart; o código nunca o faz, e uma URL de parte não pode ser reaproveitada como um); (b) o worker precisa de `DeleteObject` nos originais para os fluxos autorizados de recuperação (restrição por identidade comprovada só no código); (c) o `s3:ListBucket` exigido por `HeadBucket` também permite à API e ao worker listar chaves do bucket; (d) `ListBuckets` devolveu só o bucket autorizado nos testes executados — comportamento observado, não garantia; (e) o provisionamento não rotaciona segredos existentes; (f) o escopo por prefixo (`videos/*/original`, `videos/*/thumbnail.jpg`) depende do layout de chaves do TD-10; (g) a matriz de 66 casos foi provada num MinIO isolado; no ambiente principal ela só vale depois da regressão pós-migração; (h) produção e teste compartilham o mesmo servidor MinIO, e a separação entre eles é apenas por política de bucket e identidade.
 
 ---
 
@@ -60,9 +79,9 @@ Deliver, in `nestjs-project/` only, the "Upload e Processamento de Vídeos" phas
 **Technical actions:**
 
 1. Criar `src/config/storage.config.ts`, `src/config/upload.config.ts`, `src/config/worker.config.ts` e `src/config/queue.config.ts` com `registerAs` (per `phase-01-configuracao-base/TD-03`), registrados no `ConfigModule` existente
-2. Estender `src/config/env.validation.ts` (Joi, per `phase-01-configuracao-base/TD-02`) com as chaves do TD-16 e os defaults da tabela abaixo; credenciais (`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`) obrigatórias e sem default (per `phase-03-videos/TD-04`); `S3_TEST_BUCKET` deve casar `^[a-z0-9-]+-test$` e `PGBOSS_TEST_SCHEMA` `^[a-z][a-z0-9_]*_test$`, espelhando `DB_TEST_NAME` (per `phase-03-videos/TD-15`)
+2. Estender `src/config/env.validation.ts` (Joi, per `phase-01-configuracao-base/TD-02`) com as chaves do TD-16 e os defaults da tabela abaixo; credenciais (`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`) obrigatórias e sem default (per `phase-03-videos/TD-04`) _(substituída pela Revisão 2026-11-12 deste SI — R1: `MINIO_ROOT_*` saem da validação da API e do worker)_; `S3_TEST_BUCKET` deve casar `^[a-z0-9-]+-test$` e `PGBOSS_TEST_SCHEMA` `^[a-z][a-z0-9_]*_test$`, espelhando `DB_TEST_NAME` (per `phase-03-videos/TD-15`)
 3. Adicionar regras cruzadas no schema: `PROCESSING_INPUT_PRESIGN_TTL_SECONDS > WORKER_JOB_TIMEOUT_SECONDS` (per `phase-03-videos/TD-08` revisão AMB-3); todo `*_PRESIGN_TTL_SECONDS` ≤ 604800 (SigV4, per `phase-03-videos/TD-04`); `UPLOAD_PART_SIZE_BYTES` ≥ 5242880 e `ceil(MAX_UPLOAD_BYTES / UPLOAD_PART_SIZE_BYTES)` ≤ 10000 (per `phase-03-videos/TD-01`); `MAX_PENDING_UPLOAD_BYTES_PER_OWNER` ≥ `MAX_UPLOAD_BYTES` (per `phase-03-videos/TD-13`)
-4. Atualizar `nestjs-project/.env.example` com os nomes e valores vazios/placeholder (nunca credenciais reais nem o `DB_TEST_SERVER_ID`) e o bloco `environment` de `compose.yaml` (per `phase-03-videos/TD-16`)
+4. Atualizar `nestjs-project/.env.example` com os nomes e valores vazios/placeholder (nunca credenciais reais nem o `DB_TEST_SERVER_ID`) e o bloco `environment` de `compose.yaml` (per `phase-03-videos/TD-16`) _(substituída pela Revisão 2026-11-12 deste SI — R3 e SI-03.3 R1, mapeamento por serviço)_
 
 Defaults operacionais (todos sobrescrevíveis por ambiente; valores fixados pelo plan-build onde o TD delegou):
 
@@ -109,6 +128,27 @@ Defaults operacionais (todos sobrescrevíveis por ambiente; valores fixados pelo
 - `S3_TEST_BUCKET=streamtube-videos` (sem sufixo `-test`) é rejeitado.
 - `.env.example` lista todas as chaves canônicas do TD-16 sem nenhum valor de credencial nem `PRESIGN_TTL_SECONDS`.
 
+**Revisão 2026-11-12 — menor privilégio (pendente; per `phase-03-videos/TD-04`, `phase-03-videos/TD-16`):**
+
+_Technical actions (revisão):_
+
+- R1. `env.validation.ts`: remover `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` da validação de API e worker (eles não os recebem); `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` continuam obrigatórias, agora com o valor da identidade do processo; no processo da API, `S3_DELIVERY_ACCESS_KEY_ID`/`S3_DELIVERY_SECRET_ACCESS_KEY` obrigatórias, e o worker não as exige nem recebe. Consistência validada só sobre as próprias credenciais: pares completos (nunca só o ID ou só o segredo) e, na API, a identidade de entrega diferente da identidade da API. A comparação com o identificador root é feita pelo provisionamento/preflight (SI-03.3 R2), nunca pela API ou pelo worker.
+- R2. As chaves de teste `S3_TEST_API_*`, `S3_TEST_WORKER_*` e `S3_TEST_DELIVERY_*` (pares `ACCESS_KEY_ID`/`SECRET_ACCESS_KEY`) não fazem parte da validação de produção: só o helper de teste as lê, no contexto explícito de execução de teste (SI-03.4 R3). `S3_TEST_MAINTENANCE_*` não aparece no schema da API nem do worker.
+- R3. `.env.example`: nomes com valores vazios para `S3_API_*`, `S3_WORKER_*`, `S3_DELIVERY_*`, `S3_TEST_API_*`, `S3_TEST_WORKER_*`, `S3_TEST_DELIVERY_*` e `S3_TEST_MAINTENANCE_*`; `MINIO_ROOT_*` documentadas como exclusivas do serviço `minio` e do contêiner de provisionamento; nenhuma sugestão de reutilizar o usuário root; `S3_TEST_MAINTENANCE_*` documentadas como exclusivas do contêiner de manutenção.
+
+_Tests (revisão):_
+
+| Artifact | Layer | Test file |
+|----------|-------|-----------|
+| `env.validation.ts` (credenciais por processo, entrega, sem root, sem fallback de teste) | Unit | `src/config/env.validation.spec.ts` |
+
+_Acceptance criteria (revisão):_
+
+- Sem `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` no ambiente, a validação da API e a do worker aceitam o ambiente.
+- Na API, a ausência de `S3_DELIVERY_ACCESS_KEY_ID` ou de `S3_DELIVERY_SECRET_ACCESS_KEY`, ou `S3_DELIVERY_ACCESS_KEY_ID` igual a `S3_ACCESS_KEY_ID`, é rejeitada na inicialização.
+- Com `S3_ACCESS_KEY_ID` ausente e `S3_TEST_API_ACCESS_KEY_ID` definido, a inicialização de produção é rejeitada (sem fallback para credenciais de teste).
+- `.env.example` lista as chaves de R3 sem valores e sem `MINIO_ROOT_*` associado a `nestjs-api` ou `worker`.
+
 ---
 
 ### SI-03.3 — Infra: imagem MinIO fixada e serviço Compose (Verification Gate 2)
@@ -118,7 +158,7 @@ Defaults operacionais (todos sobrescrevíveis por ambiente; valores fixados pelo
 **Technical actions:**
 
 1. Criar `nestjs-project/docker/minio/Dockerfile` — base `debian:12-slim` fixada por tag e digest; `ARG` do release `RELEASE.2025-09-07T16-13-09Z` e do SHA-256 `7c5bd8512c6e966455b1d198209358b2d191c77a83ab377c4073281065fb855f`; download do asset do GitHub; `sha256sum -c` comparando o hash (não o nome) e falhando o build; verificação minisign opcional com a chave do `Dockerfile.release` da tag; `curl` para o healthcheck; usuário não-root; `VOLUME /data`; `HEALTHCHECK` em `/minio/health/ready` (per `phase-03-videos/TD-03`); asset/checksum ARM64 documentados como `ARG` alternativo quando aplicável
-2. Adicionar o serviço `minio` em `nestjs-project/compose.yaml` — build do Dockerfile acima, portas `9000` (API) e `9001` (console), volume nomeado, credenciais de `.env`, `MINIO_API_CORS_ALLOW_ORIGIN`, healthcheck; `nestjs-api` passa a depender de `minio` com `condition: service_healthy` (per `phase-03-videos/TD-16`)
+2. Adicionar o serviço `minio` em `nestjs-project/compose.yaml` — build do Dockerfile acima, portas `9000` (API) e `9001` (console), volume nomeado, credenciais de `.env`, `MINIO_API_CORS_ALLOW_ORIGIN`, healthcheck; `nestjs-api` passa a depender de `minio` com `condition: service_healthy` (per `phase-03-videos/TD-16`) _(credenciais por serviço revisadas pela Revisão 2026-11-12 deste SI — R1)_
 3. Atualizar `nestjs-project/CLAUDE.md` (Environment Startup Verification) e `README.md` com a checagem de prontidão do MinIO (`docker compose exec minio curl -fsS http://localhost:9000/minio/health/ready`)
 
 **Tests:** _(empty — Infra; smoke-gated by build and healthcheck ACs; storage behavior tested in SI-03.4)_
@@ -132,6 +172,27 @@ Defaults operacionais (todos sobrescrevíveis por ambiente; valores fixados pelo
 - O processo do MinIO dentro do container roda com usuário diferente de `root`.
 - Uma requisição de preflight `OPTIONS` à API do MinIO com `Origin` igual a `MINIO_API_CORS_ALLOW_ORIGIN` é aceita, e a resposta a um `PUT` expõe o header `ETag`.
 
+**Revisão 2026-11-12 — provisionamento, identidades e migração controlada (pendente; per `phase-03-videos/TD-03`, `phase-03-videos/TD-04`, `phase-03-videos/TD-15`, `phase-03-videos/TD-16`):**
+
+_A imagem do servidor MinIO fixado não muda (`sha256:080888beaa5d320726fa63ac5589129eb2a3d22d88d3fb6a623e28f74dafd656`); o Gate 2 não precisa ser reexecutado para o servidor._
+
+_Technical actions (revisão):_
+
+- R1. `compose.yaml`: `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` apenas no serviço `minio`; em `nestjs-api`, `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` mapeadas de `S3_API_ACCESS_KEY_ID`/`S3_API_SECRET_ACCESS_KEY`, mais `S3_DELIVERY_*`; em `worker`, mapeadas de `S3_WORKER_ACCESS_KEY_ID`/`S3_WORKER_SECRET_ACCESS_KEY` (SI-03.12 R1); as chaves `S3_TEST_API_*`, `S3_TEST_WORKER_*` e `S3_TEST_DELIVERY_*` podem ser passadas a `nestjs-api` e `worker` para as execuções de teste; `S3_TEST_MAINTENANCE_*` nunca é passada a nenhum serviço Compose. A configuração de produção não depende de nenhuma chave de teste.
+- R2. Transformar o artefato do spike `nestjs-project/docker/storage-provision/` em entregável: `Dockerfile` (base fixada por digest, `mc` verificado por SHA-256 no build, usuário não-root), `provision.sh` e políticas templatizadas por bucket. Estender o provisionamento a `S3_BUCKET` e `S3_TEST_BUCKET`: buckets criados só quando ausentes; perfis API/worker/entrega aplicados às identidades de produção em `S3_BUCKET` e às identidades de teste em `S3_TEST_BUCKET`; política de manutenção limitada a `S3_TEST_BUCKET`. Preflight antes de qualquer escrita: rejeita qualquer identidade operacional, de teste ou de manutenção cujo ID seja igual a `MINIO_ROOT_USER`, duas identidades com o mesmo ID, `S3_TEST_BUCKET` igual a `S3_BUCKET` ou sem o sufixo `-test`, e um usuário existente ligado a outra política; segredos nunca impressos nem passados na linha de comando do host. Execução sob demanda (`docker build` + `docker run --rm` na rede do Compose), nunca como serviço Compose.
+- R3. Migração controlada do ambiente existente, sem perda de dados: (1) inventário somente leitura de buckets, objetos (contagem), usuários e políticas; (2) gerar localmente os segredos das novas identidades no `.env` git-ignored (nunca em arquivo versionado); (3) executar o provisionamento — `streamtube-videos` existente é mantido como está, e `S3_TEST_BUCKET` é mantido se já existir; (4) recriar `nestjs-api` e `worker` com o novo ambiente; (5) verificar que nenhum dos dois expõe `MINIO_ROOT_*` e que `HeadBucket` passa com a própria identidade; (6) repetir o inventário e comparar. Rollback: restaurar o `.env` anterior (o usuário root e os dados não são alterados). O banco de desenvolvimento, `streamtube_backup_verify` e o dump de backup não são tocados.
+- R4. Atualizar `nestjs-project/CLAUDE.md` e `README.md`: provisionamento obrigatório antes do primeiro `docker compose up` de `nestjs-api`/`worker`, contêiner de manutenção dos testes (SI-03.4 R4) e a regra de credenciais por processo.
+
+_Tests (revisão):_ _(Infra; validado pelos ACs abaixo e pela regressão de permissões do SI-03.4 R5)_
+
+_Acceptance criteria (revisão):_
+
+- `docker compose config` mostra `MINIO_ROOT_*` somente no serviço `minio`; `nestjs-api` e `worker` não têm `MINIO_ROOT_*` nem `S3_TEST_MAINTENANCE_*`.
+- O build da imagem de provisionamento com um SHA-256 do `mc` alterado falha no passo de verificação.
+- Duas execuções seguidas do provisionamento: a segunda não cria nem altera nada; com um usuário existente ligado a outra política, a execução para antes de qualquer escrita.
+- O preflight rejeita, antes de qualquer escrita, uma identidade com ID igual a `MINIO_ROOT_USER`, duas identidades com o mesmo ID e `S3_TEST_BUCKET` igual a `S3_BUCKET`.
+- Depois da migração, o inventário de buckets e objetos do ambiente principal é idêntico ao anterior, e o banco de desenvolvimento, `streamtube_backup_verify` e o dump permanecem inalterados.
+
 ---
 
 ### SI-03.4 — Módulo de storage S3 (dois endpoints, presigner, bucket)
@@ -141,10 +202,10 @@ Defaults operacionais (todos sobrescrevíveis por ambiente; valores fixados pelo
 **Technical actions:**
 
 1. Instalar `@aws-sdk/client-s3@^3.x` e `@aws-sdk/s3-request-presigner@^3.x`, conferindo a API instalada contra `library-refs.md` → `### @aws-sdk/client-s3` e `### @aws-sdk/s3-request-presigner` (per `phase-03-videos/TD-04`)
-2. Criar `src/storage/storage.module.ts` e `src/storage/s3-clients.provider.ts` — `internalClient` com `S3_ENDPOINT` e `publicSigner` com `S3_PUBLIC_ENDPOINT`, ambos `forcePathStyle: true`, `requestChecksumCalculation: 'WHEN_REQUIRED'` (sem parâmetros `x-amz-checksum-*` nas URLs assinadas) e credenciais só de `storageConfig` (per `phase-03-videos/TD-04`). **Política de timeout** (constantes em `src/storage/storage-timeouts.ts`): `connectionTimeout` 3 s e `requestTimeout` 15 s em todas as operações de controle, mais um `AbortSignal` com o mesmo teto; `maxAttempts: 1` (sem retry interno do SDK) em `CreateMultipartUpload` e `CompleteMultipartUpload`, para que cada tentativa seja classificada pela aplicação; nenhuma chamada espera sem limite
+2. Criar `src/storage/storage.module.ts` e `src/storage/s3-clients.provider.ts` — `internalClient` com `S3_ENDPOINT` e `publicSigner` com `S3_PUBLIC_ENDPOINT` _(substituída pela Revisão 2026-11-12 deste SI — R1: `publicSigner` dividido em `partSigner` e `deliverySigner`)_, ambos `forcePathStyle: true`, `requestChecksumCalculation: 'WHEN_REQUIRED'` (sem parâmetros `x-amz-checksum-*` nas URLs assinadas) e credenciais só de `storageConfig` (per `phase-03-videos/TD-04`). **Política de timeout** (constantes em `src/storage/storage-timeouts.ts`): `connectionTimeout` 3 s e `requestTimeout` 15 s em todas as operações de controle, mais um `AbortSignal` com o mesmo teto; `maxAttempts: 1` (sem retry interno do SDK) em `CreateMultipartUpload` e `CompleteMultipartUpload`, para que cada tentativa seja classificada pela aplicação; nenhuma chamada espera sem limite
 3. Criar `src/storage/storage.service.ts` — wrappers tipados de `CreateMultipartUpload` (com metadado `upload-binding`), `ListParts` paginado por `PartNumberMarker`/`NextPartNumberMarker`, `ListMultipartUploads` por prefixo da chave do vídeo (para abortar multiparts órfãos), `CompleteMultipartUpload` (uma resposta `200` com `<Error>` no corpo é tratada como erro, nunca como sucesso), `AbortMultipartUpload`, `HeadObject` (devolve `ContentLength`, `ETag` e metadados), `PutObject` e `DeleteObject`; `presignUploadPart`, `presignGet` (público, com `ResponseContentDisposition` opcional) e `presignInternalGet` (interno, para o worker); erros classificados por `error.name`/código S3 (não só pelo status HTTP) em `definitive`, `transient` e `ambiguous` — inclusive o erro que o SDK extrai de um `200` com `<Error>` no corpo —, `NoSuchUpload` mapeado para `UploadNotFoundError`; e `src/storage/storage-key.ts` com `originalKey(id)` = `videos/<id>/original` e `thumbnailKey(id)` = `videos/<id>/thumbnail.jpg`, apenas a partir do UUID interno (per `phase-03-videos/TD-02`, `phase-03-videos/TD-08`, `phase-03-videos/TD-10`, `phase-03-videos/TD-11`)
 4. Criar `src/storage/multipart-cleanup.ts` → `confirmUploadsGone(key, knownUploadIds, bindingToken)`, devolvendo `aborted | completed | indeterminate`: (a) lista **todas** as sessões da chave exclusiva por `ListMultipartUploads` paginado (`KeyMarker`/`UploadIdMarker`, só a chave exata) e une com os `knownUploadIds`; (b) para cada sessão, `AbortMultipartUpload` repetido com backoff até `ListParts` responder `NoSuchUpload` (partes em trânsito podem recriar partes depois do primeiro abort), com teto de tentativas; (c) `HeadObject` da chave: `404` → sem objeto; presente com `upload-binding = bindingToken` → `completed` (o upload concluiu e segue para a prova do SI-03.10); presente com outro binding ou metadado ilegível → `indeterminate`. Resultado `aborted` só quando todas as sessões responderam `NoSuchUpload` **e** o `HeadObject` respondeu `404`; qualquer erro, teto atingido ou listagem incompleta → `indeterminate`. A lista vazia sozinha nunca é prova (per `phase-03-videos/TD-14`, `phase-03-videos/TD-02`)
-5. Criar `src/storage/bucket-bootstrap.service.ts` (cria `S3_BUCKET` na inicialização se ausente, sem `mc`, per `phase-03-videos/TD-03`) e `src/test/test-storage.ts` (usa `S3_TEST_BUCKET` e recusa esvaziar qualquer bucket que não seja o de teste, per `phase-03-videos/TD-15`)
+5. Criar `src/storage/bucket-bootstrap.service.ts` (cria `S3_BUCKET` na inicialização se ausente, sem `mc`, per `phase-03-videos/TD-03`) e `src/test/test-storage.ts` (usa `S3_TEST_BUCKET` e recusa esvaziar qualquer bucket que não seja o de teste, per `phase-03-videos/TD-15`) _(substituída pela Revisão 2026-11-12 deste SI — R2 e R3: só `HeadBucket`; limpeza movida para o contêiner de manutenção, R4)_
 
 **Tests:**
 
@@ -159,13 +220,40 @@ Defaults operacionais (todos sobrescrevíveis por ambiente; valores fixados pelo
 
 **Acceptance criteria:**
 
-- Após a inicialização com o bucket ausente, `S3_BUCKET` existe no MinIO.
+- Após a inicialização com o bucket ausente, `S3_BUCKET` existe no MinIO. _(substituída pela Revisão 2026-11-12 deste SI — R-AC1)_
 - Uma URL de `presignUploadPart` contém o host de `S3_PUBLIC_ENDPOINT`, não contém `x-amz-checksum`, e um `PUT` de 5 MiB nela retorna `200` com `ETag`.
 - Uma URL de `presignInternalGet` contém o host de `S3_ENDPOINT` e é aceita a partir do container da API.
 - `ListParts` de um upload com mais partes que o tamanho de página retorna todas as partes, na ordem.
 - No MinIO fixado, `confirmUploadsGone` devolve `aborted` para uma chave com duas sessões abertas (uma desconhecida), `completed` para uma chave com objeto concluído com o binding esperado e `indeterminate` com o storage parado.
-- Esvaziar um bucket chamado `streamtube-videos` pelo helper de teste é recusado antes de qualquer chamada ao storage.
+- Esvaziar um bucket chamado `streamtube-videos` pelo helper de teste é recusado antes de qualquer chamada ao storage. _(substituída pela Revisão 2026-11-12 deste SI — R-AC5, guard no contêiner de manutenção)_
 - Com o MinIO pausado, um `CreateMultipartUpload` termina em no máximo 15 s com erro classificado `ambiguous`, e o SDK não o reenvia.
+
+**Revisão 2026-11-12 — clientes por identidade, verificação de bucket e harness de testes (pendente; per `phase-03-videos/TD-03`, `phase-03-videos/TD-04`, `phase-03-videos/TD-15`, `phase-03-videos/TD-16`):**
+
+_Technical actions (revisão):_
+
+- R1. `s3-clients.provider.ts`: `publicSigner` dividido em `partSigner` (credenciais do processo da API, `S3_PUBLIC_ENDPOINT`) e `deliverySigner` (`S3_DELIVERY_*`, `S3_PUBLIC_ENDPOINT`); `presignUploadPart` usa `partSigner`; `presignGet` (reprodução e download) usa `deliverySigner`; `presignInternalGet` continua no `internalClient` e, no worker, assina com a identidade do worker. O worker não constrói o `deliverySigner`. As demais opções (`forcePathStyle`, `requestChecksumCalculation: 'WHEN_REQUIRED'`, timeouts) não mudam.
+- R2. `bucket-bootstrap.service.ts` passa a ser somente verificação: `HeadBucket` em `S3_BUCKET` na inicialização da API e do worker; bucket ausente, inacessível ou negado → falha imediata com erro que nomeia o bucket; nenhum `CreateBucket` em nenhum caminho (o nome do serviço pode mudar para refletir a verificação).
+- R3. `src/test/test-storage.ts`: no contexto explícito de teste, mapeia `S3_TEST_API_*`, `S3_TEST_WORKER_*` e `S3_TEST_DELIVERY_*` para os clientes por processo, nunca como fallback de configuração ausente; verifica `S3_TEST_BUCKET` (`assertTestBucket` + `HeadBucket` com a identidade de teste) e falha fechado quando ausente, igual a `S3_BUCKET`, ambíguo ou não autorizado; remove `emptyTestBucket` e `ensureBucket` dos hooks de todas as suítes de integração, e2e e mídia. Testes que precisam de um original gravado como fixture usam a identidade restrita de teste da API (o mesmo perfil de produção), nunca root nem a identidade de manutenção.
+- R4. Criar o contêiner efêmero de manutenção dos testes (imagem própria ou ponto de entrada separado sobre a imagem de provisionamento, decisão de implementação), com apenas `S3_TEST_MAINTENANCE_*`: antes de qualquer remoção, confirma que o alvo é `S3_TEST_BUCKET`, que ele termina em `-test`, que difere de `S3_BUCKET` e que o marcador explícito de contexto de teste está presente; só então remove objetos e aborta sessões multipart de `S3_TEST_BUCKET`. Executado sob demanda, antes e/ou depois das execuções de suíte, nunca em paralelo a elas; nunca é serviço Compose nem roda em `nestjs-api`/`worker`.
+- R5. Regressão de permissões: portar a matriz do spike (`docker/storage-provision/spike/matrix.mjs`) para uma suíte de integração contra `S3_TEST_BUCKET` com as identidades restritas de teste, sem usar a identidade de manutenção nem root, cobrindo allow/deny por identidade e registrando as limitações aceitas (regra 12 da Revisão 2026-11-12 no topo do plano) como fatos observados.
+
+_Tests (revisão):_
+
+| Artifact | Layer | Test file |
+|----------|-------|-----------|
+| `s3-clients.provider.ts` (signer por identidade) | Unit: `partSigner` com a identidade da API, `deliverySigner` com a de entrega, worker sem `deliverySigner` | `src/storage/s3-clients.provider.spec.ts` |
+| Verificação de bucket | Integration (MinIO real): bucket existente aceito; bucket ausente ou negado falha; nenhum `CreateBucket` | `src/storage/storage.service.integration-spec.ts` |
+| `test-storage.ts` (mapeamento de teste, sem fallback, alvo verificado) | Unit | `src/test/test-storage.spec.ts` |
+| Matriz de permissões | Integration (MinIO real, identidades de teste) | `src/storage/storage-permissions.integration-spec.ts` |
+
+_Acceptance criteria (revisão):_
+
+- R-AC1. Com o bucket ausente, a inicialização da API e a do worker falham com erro que nomeia o bucket, e nenhum `CreateBucket` é enviado.
+- R-AC2. O `X-Amz-Credential` de uma URL de parte traz o ID da identidade da API; o de uma URL de reprodução ou download traz o ID da identidade de entrega; nenhuma URL contém o ID root.
+- R-AC3. A matriz de permissões contra `S3_TEST_BUCKET` reproduz os resultados aprovados no spike, incluindo `CreateBucket` negado a todas as identidades, escrita negada à entrega e criação/conclusão de multipart negadas ao worker.
+- R-AC4. Nenhum hook de suíte executado em `nestjs-api` ou `worker` chama `CreateBucket`, `DeleteObject` de limpeza, `AbortMultipartUpload` de limpeza ou esvazia o bucket; as suítes passam com objetos de execuções anteriores presentes no bucket de teste.
+- R-AC5. O contêiner de manutenção recusa executar, antes de qualquer remoção, com alvo igual a `S3_BUCKET`, sem o sufixo `-test` ou sem o marcador de contexto de teste.
 
 ---
 
@@ -426,7 +514,7 @@ _Cobertura exigida dos testes de endpoint (para `/plan-test-specs`): o limite co
 
 1. Criar `src/worker/worker.module.ts` e `src/worker/main.worker.ts` — `NestFactory.createApplicationContext(WorkerModule)` (sem HTTP), importando `ConfigModule`, `TypeOrmModule`, `StorageModule` e `QueueModule`; `enableShutdownHooks()` para que `SIGTERM` chame `boss.stop()` gracioso (per `phase-03-videos/TD-06`, `phase-03-videos/TD-05`)
 2. Adicionar `nestjs-project/docker/worker/Dockerfile` — base `node` igual à do `Dockerfile.dev`, pacote `ffmpeg` do Debian com versão fixada, usuário não-root sem shell de login, comando `node dist/worker/main.worker.js` (per `phase-03-videos/TD-06`, `phase-03-videos/TD-07`)
-3. Adicionar o serviço `worker` ao `compose.yaml` — mesmo código montado, sem `ports`, `depends_on` de `db` e `minio` com `service_healthy`, `deploy.resources.limits` de CPU e memória, ambiente compartilhado com a API; incluir o script `start:worker` em `package.json` e o entrypoint no `nest-cli.json` (per `phase-03-videos/TD-16`)
+3. Adicionar o serviço `worker` ao `compose.yaml` — mesmo código montado, sem `ports`, `depends_on` de `db` e `minio` com `service_healthy`, `deploy.resources.limits` de CPU e memória, ambiente compartilhado com a API _(substituída pela Revisão 2026-11-12 deste SI — R1: credenciais próprias do worker)_; incluir o script `start:worker` em `package.json` e o entrypoint no `nest-cli.json` (per `phase-03-videos/TD-16`)
 
 **Tests:**
 
@@ -442,6 +530,19 @@ _Cobertura exigida dos testes de endpoint (para `/plan-test-specs`): o limite co
 - `docker compose exec worker ffprobe -version` e `ffmpeg -version` respondem com a versão fixada.
 - O processo do worker roda com usuário diferente de `root`.
 - `docker compose stop worker` termina o processo dentro do timeout de parada, sem job deixado em estado ativo sem dono.
+
+**Revisão 2026-11-12 — identidade do worker (pendente; per `phase-03-videos/TD-04`, `phase-03-videos/TD-16`):**
+
+_Technical actions (revisão):_
+
+- R1. No serviço `worker`, `S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY` vêm de `S3_WORKER_*`; o worker não recebe `MINIO_ROOT_*`, `S3_DELIVERY_*` nem `S3_TEST_MAINTENANCE_*`; as demais chaves não sensíveis continuam compartilhadas com a API. A inicialização do worker só verifica o bucket com `HeadBucket` (SI-03.4 R2).
+
+_Tests (revisão):_ _(Infra; `WorkerModule` compilation test inalterado; permissões cobertas pelo SI-03.4 R5)_
+
+_Acceptance criteria (revisão):_
+
+- `docker compose exec worker printenv` não contém `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `S3_DELIVERY_ACCESS_KEY_ID` nem `S3_TEST_MAINTENANCE_ACCESS_KEY_ID`.
+- Com o bucket ausente, o worker falha na inicialização sem enviar `CreateBucket`.
 
 ---
 
@@ -569,12 +670,26 @@ _Cobertura exigida dos testes de endpoint (para `/plan-test-specs`): o limite co
 
 **Acceptance criteria:**
 
-- `GET /videos/:id/playback-url` pelo dono de um vídeo `ready` retorna `200` com `{ url, expires_at }` e `Cache-Control: no-store`. A resposta nunca deve conter `S3_SECRET_ACCESS_KEY`, tokens administrativos ou qualquer segredo permanente. `S3_ACCESS_KEY_ID` pode aparecer exclusivamente dentro do parâmetro `X-Amz-Credential` da URL pré-assinada, conforme AWS Signature V4. Nenhuma credencial secreta deve ser retornada, persistida ou registrada em logs.
+- `GET /videos/:id/playback-url` pelo dono de um vídeo `ready` retorna `200` com `{ url, expires_at }` e `Cache-Control: no-store`. A resposta nunca deve conter `S3_SECRET_ACCESS_KEY`, tokens administrativos ou qualquer segredo permanente. `S3_ACCESS_KEY_ID` pode aparecer exclusivamente dentro do parâmetro `X-Amz-Credential` da URL pré-assinada, conforme AWS Signature V4. Nenhuma credencial secreta deve ser retornada, persistida ou registrada em logs. _(Revisão 2026-11-12: o ID que aparece em `X-Amz-Credential` passa a ser o da identidade de entrega, `S3_DELIVERY_ACCESS_KEY_ID`; `S3_ACCESS_KEY_ID` da API e o ID root nunca aparecem — ver R-AC1 abaixo.)_
 - Um `GET` com `Range: bytes=0-1023` na URL emitida retorna `206` com `Content-Range: bytes 0-1023/<tamanho>` (Gate 8).
 - Com `PLAYBACK_PRESIGN_TTL_SECONDS` de override pequeno, a URL responde `403` depois de `expires_at`, e uma nova URL pedida em seguida retoma o `Range` a partir do mesmo byte (Gate 7).
 - A URL de `GET /videos/:id/download-url` responde com `Content-Disposition: attachment` contendo o nome original sanitizado.
 - Os dois endpoints com o vídeo em `processing` retornam `409` com `error: "VIDEO_NOT_READY"`; por outro usuário, `404` com `error: "VIDEO_NOT_FOUND"`.
 - A 61ª URL de reprodução ou download do mesmo vídeo dentro de uma hora retorna `429` com `error: "DELIVERY_URL_LIMIT_EXCEEDED"`; depois que a janela vence, uma nova URL é emitida.
+
+**Revisão 2026-11-12 — signer de entrega read-only (pendente; per `phase-03-videos/TD-04`):**
+
+_Technical actions (revisão):_
+
+- R1. `VideoDeliveryService` assina reprodução e download pelo `deliverySigner` (SI-03.4 R1), identidade read-only com `GetObject` só nos originais; TTLs, `Content-Disposition`, `no-store` e a janela de 60 URLs por hora não mudam.
+- R2. Reexecutar os Gates 7 e 8 com as identidades restritas de teste (`S3_TEST_DELIVERY_*` para a assinatura), sem limpeza de bucket nos hooks (regras 8 e 9 da Revisão 2026-11-12 no topo do plano).
+
+_Tests (revisão):_ _(mesmos arquivos; `test/videos-delivery-urls.e2e-spec.ts` passa a afirmar o ID da identidade de entrega em `X-Amz-Credential`)_
+
+_Acceptance criteria (revisão):_
+
+- R-AC1. A URL de reprodução e a de download trazem em `X-Amz-Credential` o ID da identidade de entrega; nem `S3_ACCESS_KEY_ID` da API nem o ID root aparecem na URL, no corpo ou nos logs; nenhum segredo é retornado.
+- R-AC2. Os Gates 7 e 8 passam de novo com a identidade de entrega.
 
 ---
 
@@ -590,7 +705,7 @@ _Cobertura exigida dos testes de endpoint (para `/plan-test-specs`): o limite co
 
 **Tests:** _(empty — verification script run on demand; the evidence report is the deliverable)_
 
-**Dependencies:** SI-03.11 (conclusão por HTTP), SI-03.14 (processamento), SI-03.15 (reconciliador ativo)
+**Dependencies:** SI-03.11 (conclusão por HTTP), SI-03.14 (processamento), SI-03.15 (reconciliador ativo); **pré-requisito (Revisão 2026-11-12):** as revisões pendentes de SI-03.2, SI-03.3, SI-03.4, SI-03.12 e SI-03.16 implementadas e aprovadas — provisionamento, identidades, migração controlada e regressão de permissões e dos Gates 4, 5, 6, 7 e 8 e da suíte do reconciliador — antes de iniciar este SI; a verificação usa as identidades restritas e `S3_TEST_BUCKET` (per `phase-03-videos/TD-15`, `phase-03-videos/TD-16`)
 
 **Acceptance criteria:**
 
@@ -702,7 +817,7 @@ Issues presigned `UploadPart` URLs for a batch of part numbers; re-requestable a
 - part_numbers: integer[], required — 1..100 distinct values, each in `1..expected_part_count`
 
 **Response 200:**
-- parts: array of `{ part_number: integer, url: string, expires_at: string (ISO-8601) }` — URLs signed for `S3_PUBLIC_ENDPOINT` with `UPLOAD_PART_PRESIGN_TTL_SECONDS` (per phase-03-videos/TD-04, phase-03-videos/TD-13 revision IC-2)
+- parts: array of `{ part_number: integer, url: string, expires_at: string (ISO-8601) }` — URLs signed for `S3_PUBLIC_ENDPOINT` with `UPLOAD_PART_PRESIGN_TTL_SECONDS` (per phase-03-videos/TD-04, phase-03-videos/TD-13 revision IC-2); signed by the API identity (per phase-03-videos/TD-04 revision 2026-11-12)
 
 **Error responses:**
 - 400 VALIDATION_ERROR: when `part_numbers` is missing, empty, too long, duplicated or out of range
@@ -808,7 +923,7 @@ Owner-only status of the draft (per phase-03-videos/TD-12, phase-03-videos/TD-15
 Emits a presigned GET for streaming; storage answers `Range` requests directly (per phase-03-videos/TD-11).
 
 **Response 200:** (with `Cache-Control: no-store`)
-- url: string — presigned for `S3_PUBLIC_ENDPOINT` with `PLAYBACK_PRESIGN_TTL_SECONDS` (per phase-03-videos/TD-11 revision IC-2)
+- url: string — presigned for `S3_PUBLIC_ENDPOINT` with `PLAYBACK_PRESIGN_TTL_SECONDS` (per phase-03-videos/TD-11 revision IC-2); signed by the read-only delivery identity, whose key ID is the only identifier in `X-Amz-Credential` (per phase-03-videos/TD-04 revision 2026-11-12)
 - expires_at: string (ISO-8601) — the client requests a new URL before this instant and keeps the playback position
 
 **Error responses:**
@@ -824,7 +939,7 @@ Emits a presigned GET for streaming; storage answers `Range` requests directly (
 Emits a presigned GET that forces download with the sanitized original filename (per phase-03-videos/TD-11, phase-03-videos/TD-13).
 
 **Response 200:** (with `Cache-Control: no-store`)
-- url: string — presigned for `S3_PUBLIC_ENDPOINT` with `DOWNLOAD_PRESIGN_TTL_SECONDS` and `ResponseContentDisposition: attachment` with the RFC 6266-encoded `original_filename` (per phase-03-videos/TD-11 revision IC-2)
+- url: string — presigned for `S3_PUBLIC_ENDPOINT` with `DOWNLOAD_PRESIGN_TTL_SECONDS` and `ResponseContentDisposition: attachment` with the RFC 6266-encoded `original_filename` (per phase-03-videos/TD-11 revision IC-2); signed by the read-only delivery identity (per phase-03-videos/TD-04 revision 2026-11-12)
 - expires_at: string (ISO-8601)
 
 **Error responses:**
@@ -952,6 +1067,7 @@ SI-03.4 + SI-03.5
     └── SI-03.15 — depends on SI-03.10, SI-03.12 (reaper/reconciler)
 
 SI-03.17 — depends on SI-03.11, SI-03.14, SI-03.15 (10 GiB end-to-end; Gate 3)
+    └── prerequisite (Revisão 2026-11-12): pending least-privilege revisions of SI-03.2, SI-03.3, SI-03.4, SI-03.12, SI-03.16 implemented and approved; permission matrix and Gates 4, 5, 6, 7, 8 + reconciler suite re-run
 ```
 
 Verification Gates → SIs: Gate 1 → SI-03.1 · Gate 2 → SI-03.3 · Gate 3 → SI-03.17 · Gate 4 → SI-03.10 · Gate 5 → SI-03.10 · Gate 6 → SI-03.13 · Gate 7 → SI-03.16 · Gate 8 → SI-03.16. Gate 1 must be recorded before SI-03.5 starts; every gate stays PENDING until its SI records PASS.

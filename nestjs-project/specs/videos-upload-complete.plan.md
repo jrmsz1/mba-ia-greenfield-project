@@ -16,13 +16,13 @@ O dono conclui o upload enviando o manifesto ordenado `{ part_number, etag }`. O
 
 ### 1. Conclusão
 
-**Setup:** `beforeEach` limpa as tabelas do banco de teste, esvazia `S3_TEST_BUCKET` e reseta `PGBOSS_TEST_SCHEMA` pelos helpers de teste; aplicação montada com `Test.createTestingModule({ imports: [AppModule] }).compile()` e os pipes/filters de `main.ts`; o dono cria um vídeo de 2 partes (`UPLOAD_PART_SIZE_BYTES` com override ≥ 5 MiB) e envia as duas partes por `PUT` às URLs emitidas, guardando os `ETag`s.
+**Setup:** `beforeEach` limpa as tabelas do banco de teste e reseta `PGBOSS_TEST_SCHEMA` pelos helpers de teste; o bucket de teste não é criado nem esvaziado pelos hooks (per `phase-03-videos/TD-15` e `phase-03-videos/TD-16`, revisões de 2026-11-12): o storage é acessado somente pelas identidades restritas de teste (`S3_TEST_API_*`, `S3_TEST_WORKER_*`, `S3_TEST_DELIVERY_*`), mapeadas no contexto explícito de teste, nunca por root nem pela identidade de manutenção; cada cenário cria seus próprios vídeos e faz as asserções de storage apenas pelas chaves `videos/<uuid>/…` desses vídeos, sem supor bucket vazio; aplicação montada com `Test.createTestingModule({ imports: [AppModule] }).compile()` e os pipes/filters de `main.ts`; o dono cria um vídeo de 2 partes (`UPLOAD_PART_SIZE_BYTES` com override ≥ 5 MiB) e envia as duas partes por `PUT` às URLs emitidas, guardando os `ETag`s.
 
 #### 1.1. complete-with-correct-manifest
 
 **Covers AC:** #1
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. POST /videos/<id>/upload/complete com `{ "parts": [{ "part_number": 1, "etag": "<e1>" }, { "part_number": 2, "etag": "<e2>" }] }`
@@ -34,7 +34,7 @@ O dono conclui o upload enviando o manifesto ordenado `{ part_number, etag }`. O
 
 **Covers AC:** #2
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Depois de 1.1, repetir a mesma requisição
@@ -45,7 +45,7 @@ O dono conclui o upload enviando o manifesto ordenado `{ part_number, etag }`. O
 
 **Covers AC:** #3
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Ajustar o vídeo para `completing` (claim em andamento) no banco de teste; POST /videos/<id>/upload/complete com o manifesto correto
@@ -55,7 +55,7 @@ O dono conclui o upload enviando o manifesto ordenado `{ part_number, etag }`. O
 
 **Covers AC:** #4
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. POST com as partes fora de ordem (`[2, 1]`)
@@ -70,7 +70,7 @@ O dono conclui o upload enviando o manifesto ordenado `{ part_number, etag }`. O
 
 **Covers AC:** #5
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. POST /videos/<id>/upload/complete com o token de outro usuário e o manifesto correto
@@ -85,7 +85,7 @@ O dono conclui o upload enviando o manifesto ordenado `{ part_number, etag }`. O
 
 **Covers AC:** #3, #1
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Injetar timeout depois que o storage concluiu o objeto; POST com o manifesto correto
@@ -98,7 +98,7 @@ O dono conclui o upload enviando o manifesto ordenado `{ part_number, etag }`. O
 
 **Covers AC:** #3, #4
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Injetar `200` com `<Error><Code>InternalError</Code></Error>`; POST com o manifesto correto
@@ -114,7 +114,7 @@ O dono conclui o upload enviando o manifesto ordenado `{ part_number, etag }`. O
 
 **Covers AC:** #6
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Fazer 120 chamadas GET /videos/<id>/upload
@@ -128,7 +128,7 @@ O dono conclui o upload enviando o manifesto ordenado `{ part_number, etag }`. O
 
 **Covers AC:** #7
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Esgotar o limite como em 3.1
@@ -140,7 +140,7 @@ O dono conclui o upload enviando o manifesto ordenado `{ part_number, etag }`. O
 
 **Covers AC:** #3, #6
 **Source:** auto
-**Last sync:** 2026-11-12T17:18:25Z
+**Last sync:** 2026-11-12T20:34:20Z
 
 **Steps:**
   1. Com o vídeo mantido em `completing` pela injeção do grupo 2, repetir o POST 60 vezes (o ritmo de `Retry-After: 60` ao longo de uma hora)

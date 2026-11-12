@@ -4,8 +4,8 @@ name: phase-03-videos
 status: clean
 issue_count: 0
 sources_mtime:
-  docs/phases/phase-03-videos/context.md: "2026-11-12T11:47:31-03:00"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-12T11:45:37-03:00"
+  docs/phases/phase-03-videos/context.md: "2026-11-12T17:24:51-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-12T17:24:51-03:00"
 issues:
   - id: AMB-1
     status: resolved
@@ -99,6 +99,18 @@ issues:
     status: resolved
     resolved_by: phase-03-videos/TD-09, phase-03-videos/TD-02
     summary: "TD-09 ties UPLOAD_INVALID to object deletion; TD-02 rev retains foreign object"
+  - id: IC-4
+    status: resolved
+    resolved_by: phase-03-videos/TD-15, phase-03-videos/TD-16
+    summary: "TD-15 test bucket reset vs TD-04/TD-16 bucket-scoped identities, no root"
+  - id: IC-5
+    status: resolved
+    resolved_by: phase-03-videos/TD-16, phase-03-videos/TD-15
+    summary: "TD-15 test-only operational identities have no TD-16 keys nor delivery path"
+  - id: AMB-4
+    status: resolved
+    resolved_by: phase-03-videos/TD-15
+    summary: "External test-maintenance cleanup vs in-container suites: runner and ordering"
 ---
 
 # phase-03-videos — Validation
@@ -131,7 +143,7 @@ _None._
 
 ### UI Coverage Gaps
 
-_None._ (No UI scope in this phase.)
+_None._
 
 ## Resolved Issues
 
@@ -158,3 +170,6 @@ _None._ (No UI scope in this phase.)
 - **AMB-2** _(resolved_by phase-03-videos/TD-13, phase-03-videos/TD-14, phase-03-videos/TD-16)_ — TD-13 per-owner quota metric undecided; limit defaults deferred to planning. Append revision to TD-13 (quota = pending bytes, sum of declared sizes of the owner's `uploading`/`completing` uploads, key `MAX_PENDING_UPLOAD_BYTES_PER_OWNER`), TD-16 (key added; initial values of the seven limit keys set by `plan-build` as configurable defaults tested with small overrides) and TD-14 (`COMPLETING_STALE_MINUTES` default set by `plan-build`). Decisions unchanged (A).
 - **AMB-3** _(resolved_by phase-03-videos/TD-08, phase-03-videos/TD-16)_ — Worker input presigned URL has no TTL key; TD-08 needs TTL > job timeout. Append revision to TD-08 (worker input URL uses `PROCESSING_INPUT_PRESIGN_TTL_SECONDS`, default set by `plan-build`, startup validation rejects a value not greater than `WORKER_JOB_TIMEOUT_SECONDS`) and to TD-16 (key added to the canonical list). Decisions unchanged (A).
 - **IC-3** _(resolved_by phase-03-videos/TD-09, phase-03-videos/TD-02)_ — TD-09 ties UPLOAD_INVALID to object deletion; TD-02 rev retains foreign object. Append revision to TD-09 (2026-11-12): `uploading`/`completing` → `failed` (`UPLOAD_INVALID`) on an upload-binding contradiction with the object retained, no job, never delivered; "object deleted" kept only for an object that carries this upload's binding with a size/ETag contradiction, after a re-read before the delete. Decision unchanged (A).
+- **IC-4** _(resolved_by phase-03-videos/TD-15, phase-03-videos/TD-16)_ — TD-15 test bucket reset vs TD-04/TD-16 bucket-scoped identities, no root. Append revision to TD-15 (2026-11-12): provisioning also creates and validates `S3_TEST_BUCKET`; tests use the TD-04 permission profiles instantiated as test-only identities scoped to `S3_TEST_BUCKET`; fixture preparation and destructive cleanup run outside API and worker under a test-maintenance identity restricted to `S3_TEST_BUCKET`, after the target is positively verified (fail-closed); negative-permission tests never use the maintenance identity; no root credential to API or worker. Append revision to TD-16 (2026-11-12): optional `S3_TEST_MAINTENANCE_ACCESS_KEY_ID`/`S3_TEST_MAINTENANCE_SECRET_ACCESS_KEY`, separate from root and every other identity, collisions rejected by provisioning/preflight, never injected into operational API/worker containers nor used as a fallback. Decisions unchanged (A).
+- **IC-5** _(resolved_by phase-03-videos/TD-16, phase-03-videos/TD-15)_ — TD-15 test-only operational identities have no TD-16 keys nor delivery path. Option (a): Append revision to TD-16 (2026-11-12) naming `S3_TEST_API_*`, `S3_TEST_WORKER_*`, `S3_TEST_DELIVERY_*` for the TD-04 profiles scoped to `S3_TEST_BUCKET`. They may be passed to `nestjs-api`/`worker` for in-container test runs and are mapped onto the per-process clients only in the explicit test context, never as a production fallback. Provisioning/preflight rejects collisions with root, production and maintenance identities. Decision unchanged (A).
+- **AMB-4** _(resolved_by phase-03-videos/TD-15)_ — External test-maintenance cleanup vs in-container suites: runner and ordering. Option (a): Append revision to TD-15 (2026-11-12). Fixture preparation and destructive cleanup run in an ephemeral on-demand test-maintenance container (not a Compose service, not `nestjs-api`/`worker`), before and/or after the suite runs, never concurrently, with fail-closed target verification. The in-container suites perform no storage cleanup and only verify the test-bucket target; tests isolate objects by unique keys. Test DB and queue-schema resets are unchanged. Decision unchanged (A).
