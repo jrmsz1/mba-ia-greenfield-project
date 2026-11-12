@@ -61,11 +61,21 @@ async function waitForOutput(
 describe('worker entrypoint shutdown', () => {
   it('exits cleanly on SIGTERM received while booting, before consuming any job', async () => {
     const { child, output } = startWorker();
-    // Nest has started creating the context, but consumption has not begun.
+    // Signal from the stdout event itself, the moment Nest starts creating
+    // the context: polling (even every 100 ms) let a fast boot finish first
+    // under full-suite load, which exercised the after-boot path instead.
+    let sentAt = 0;
+    const onData = (chunk: Buffer): void => {
+      if (
+        sentAt === 0 &&
+        chunk.toString().includes('Starting Nest application')
+      ) {
+        sentAt = Date.now();
+        child.kill('SIGTERM');
+      }
+    };
+    child.stdout?.on('data', onData);
     await waitForOutput(output, 'Starting Nest application', 60_000);
-    const sentAt = Date.now();
-
-    child.kill('SIGTERM');
     const exit = await exitOf(child, sentAt);
 
     expect(exit).toMatchObject({ code: 0, signal: null });
