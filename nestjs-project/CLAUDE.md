@@ -13,6 +13,7 @@ docker compose ps   # all services must show status "running"
 Then verify each infrastructure service is actually ready to accept connections — not just running:
 
 - **PostgreSQL:** `docker compose exec db pg_isready -U streamtube` — expect `accepting connections`
+- **MinIO (object storage):** `docker compose exec minio curl -fsS http://localhost:9000/minio/health/ready` — expect exit code 0 (the service also reports `healthy` in `docker compose ps`). `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` must be set in the local `.env`; Compose refuses to start the service without them.
 
 Only start the NestJS dev server (`npm run start:dev`) when the user **explicitly** asks to run the application — never as part of "start the environment".
 
@@ -34,6 +35,7 @@ docker compose exec nestjs-api npm run start:dev
 Services:
 - `nestjs-api` — NestJS API, port `3000`
 - `db` — PostgreSQL 17, port `5432`, database `streamtube`, user/password `streamtube`
+- `minio` — pinned MinIO built from `docker/minio/Dockerfile` (SHA-256-verified release binary), API port `9000`, console port `9001`, data in the `minio-data` volume
 
 All verification and teardown commands run on the **host machine**:
 

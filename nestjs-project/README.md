@@ -31,6 +31,15 @@
 $ npm install
 ```
 
+### Object storage (MinIO)
+
+The `minio` Compose service builds a pinned MinIO release from `docker/minio/Dockerfile`; the build fails if the binary's SHA-256 does not match. Set `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` in your local `.env` (they are empty in `.env.example`), then check readiness:
+
+```bash
+docker compose up -d minio
+docker compose exec minio curl -fsS http://localhost:9000/minio/health/ready   # exit code 0
+```
+
 ## Compile and run the project
 
 ```bash

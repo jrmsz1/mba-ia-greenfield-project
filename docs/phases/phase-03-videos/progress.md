@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 2/17 completed
+**SIs:** 3/17 completed
 
 ## Required Technical Verification Gates
 
@@ -10,7 +10,7 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
 | # | Gate | Status | Evidence |
 |---|---|---|---|
 | 1 | TypeORM + pg-boss transactional integration (TD-05) | PASS — approved 2026-11-11 | docs/phases/phase-03-videos/spike-pgboss.md; src/queue/pgboss-spike.integration-spec.ts |
-| 2 | Pinned MinIO image, SHA-256, Compose, healthcheck, CORS (TD-03, TD-16) | PENDING | — |
+| 2 | Pinned MinIO image, SHA-256, Compose, healthcheck, CORS (TD-03, TD-16) | PASS — evidence executed 2026-11-11 (minisign/ARM64 preserved as options, not exercised) | docs/phases/phase-03-videos/gate-02-minio.md |
 | 3 | 10 GiB upload end to end (TD-01, TD-08, TD-13) | PENDING | — |
 | 4 | Ambiguous completion: identity and integrity proof (TD-02) | PENDING | — |
 | 5 | Concurrent completions (TD-02, TD-09) | PENDING | — |
@@ -40,9 +40,11 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - nestjs-api service in compose.yaml has no environment block (it reads .env); the MinIO and worker services get theirs in SI-03.3 / SI-03.12.
 
 ### SI-03.3 — Infra: imagem MinIO fixada e serviço Compose (Verification Gate 2)
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** no tests (Infra); 4 ACs verified by executed checks (docs/phases/phase-03-videos/gate-02-minio.md)
+- **Observations:**
+  - Gate 2 PASS with executed evidence; minisign (no public key in the repo) and ARM64 (amd64 host) kept as documented build args, not exercised.
+  - Compose interpolation uses ${VAR:?} so MinIO refuses to start without MINIO_ROOT_USER / MINIO_ROOT_PASSWORD in .env.
 
 ### SI-03.4 — Módulo de storage S3 (dois endpoints, presigner, bucket)
 - **Status:** pending

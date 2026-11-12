@@ -12,6 +12,23 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_started
+      minio:
+        condition: service_healthy
+
+  # Pinned, SHA-256-verified MinIO (phase-03-videos/TD-03, TD-16).
+  # Credentials come only from the local .env.
+  minio:
+    build:
+      context: ./docker/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      - MINIO_API_CORS_ALLOW_ORIGIN=${MINIO_API_CORS_ALLOW_ORIGIN:-http://localhost:3001}
+    volumes:
+      - minio-data:/data
 
   db:
     image: postgres:17
@@ -32,5 +49,8 @@ services:
     ports:
       - "1025:1025"
       - "8025:8025"
+
+volumes:
+  minio-data:
 
 
