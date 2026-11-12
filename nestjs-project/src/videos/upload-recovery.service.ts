@@ -1,11 +1,19 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import type { DataSource } from 'typeorm';
 import { JobPublisherService } from '../queue/job-publisher.service';
 import { StorageError, UploadNotFoundError } from '../storage/storage-errors';
 import { originalKey } from '../storage/storage-key';
-import { StorageService, type ManifestPart } from '../storage/storage.service';
-import { evaluateCompletionProof } from './completion-proof';
+import {
+  StorageService,
+  type ManifestPart,
+  type ObjectHead,
+} from '../storage/storage.service';
+import {
+  contradictionOf,
+  evaluateCompletionProof,
+  type Contradiction,
+} from './completion-proof';
 import { Video } from './entities/video.entity';
 import { FAILURE_REASONS, type VideoProcessingStatus } from './video.constants';
 import { firstRows } from './windowed-counter';
@@ -36,6 +44,8 @@ export interface ResolveOptions {
  */
 @Injectable()
 export class UploadRecoveryService {
+  private readonly logger = new Logger(UploadRecoveryService.name);
+
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly storage: StorageService,
@@ -70,20 +80,24 @@ export class UploadRecoveryService {
 
       // 2) What is at the exclusive key?
       const head = await this.storage.headObject(key);
-      const proof = evaluateCompletionProof({
+      const input = {
         head,
         declaredSizeBytes: video.declared_size_bytes,
         bindingToken: video.upload_binding_token,
         manifest: options.manifest,
-      });
+      };
+      const proof = evaluateCompletionProof(input);
 
       if (proof === 'proven') {
         return (await this.markUploaded(video.id, from))
           ? 'uploaded'
           : 'pending';
       }
-      if (proof === 'contradicted') {
-        return (await this.markInvalid(video.id, from)) ? 'failed' : 'pending';
+      const contradiction = contradictionOf(input);
+      if (proof === 'contradicted' && head && contradiction) {
+        return (await this.markInvalid(video.id, from, contradiction, head))
+          ? 'failed'
+          : 'pending';
       }
       if (head !== null) return 'pending'; // object present, proof unknown
 
@@ -138,10 +152,19 @@ export class UploadRecoveryService {
     });
   }
 
-  /** Positive contradiction: `failed`/`UPLOAD_INVALID` and the object deleted. */
+  /**
+   * Positive contradiction → `failed`/`UPLOAD_INVALID`, no job, and the video
+   * never becomes deliverable. The object is deleted ONLY when its identity is
+   * proven (it carries this upload's binding but the size or ETag is wrong —
+   * TD-02/TD-09). An object with a DIFFERENT binding was not produced by this
+   * authorized upload: it is never deleted automatically and is kept, with a
+   * structured log entry, for investigation and a later safe cleanup.
+   */
   async markInvalid(
     videoId: string,
     from: VideoProcessingStatus[],
+    contradiction: Contradiction,
+    head: ObjectHead,
   ): Promise<boolean> {
     const moved = await this.transition(
       videoId,
@@ -149,10 +172,24 @@ export class UploadRecoveryService {
       'failed',
       FAILURE_REASONS.UPLOAD_INVALID,
     );
-    if (moved) {
-      await this.storage.deleteObject(originalKey(videoId));
+    if (!moved) return false;
+    const key = originalKey(videoId);
+    if (contradiction === 'binding') {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'upload_invalid_object_retained',
+          videoId,
+          key,
+          contradiction,
+          observedSizeBytes: head.contentLength,
+          observedEtag: head.etag,
+          action: 'not deleted: identity not proven; manual cleanup',
+        }),
+      );
+      return true;
     }
-    return moved;
+    await this.storage.deleteObject(key);
+    return true;
   }
 
   /** Compare-and-set status change; false when the row was not in `from`. */

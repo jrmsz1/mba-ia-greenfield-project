@@ -13,7 +13,7 @@ import {
   type ObjectHead,
   type StoredPart,
 } from '../storage/storage.service';
-import { evaluateCompletionProof } from './completion-proof';
+import { contradictionOf, evaluateCompletionProof } from './completion-proof';
 import { Video } from './entities/video.entity';
 import { UploadRecoveryService } from './upload-recovery.service';
 import type { VideoProcessingStatus } from './video.constants';
@@ -172,16 +172,23 @@ export class VideoCompletionService {
       }
       throw error;
     }
-    const proof = evaluateCompletionProof({
+    const input = {
       head,
       declaredSizeBytes: video.declared_size_bytes,
       bindingToken: token,
       manifest,
-    });
+    };
+    const proof = evaluateCompletionProof(input);
+    const contradiction = contradictionOf(input);
     if (proof === 'proven') {
       await this.recovery.markUploaded(video.id, ['completing']);
-    } else if (proof === 'contradicted') {
-      await this.recovery.markInvalid(video.id, ['completing']);
+    } else if (proof === 'contradicted' && head && contradiction) {
+      await this.recovery.markInvalid(
+        video.id,
+        ['completing'],
+        contradiction,
+        head,
+      );
     }
     return await this.currentResult(video.id);
   }

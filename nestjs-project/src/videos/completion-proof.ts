@@ -44,12 +44,28 @@ export function evaluateCompletionProof(input: ProofInput): ProofOutcome {
   const { head } = input;
   if (head === null) return 'unknown';
   if (head.uploadBinding === undefined || head.etag === '') return 'unknown';
-  if (head.uploadBinding !== input.bindingToken) return 'contradicted';
-  if (head.contentLength !== input.declaredSizeBytes) return 'contradicted';
-  if (FINAL_ETAG_IS_DETERMINISTIC && input.manifest) {
-    if (unquote(head.etag) !== expectedMultipartEtag(input.manifest)) {
-      return 'contradicted';
-    }
+  return contradictionOf(input) === null ? 'proven' : 'contradicted';
+}
+
+/**
+ * Which element positively contradicts the proof. The binding is checked
+ * FIRST: a `size`/`etag` contradiction therefore implies the object carries
+ * this upload's binding (its identity is proven), whereas `binding` means the
+ * object at the key was NOT produced by this authorized upload.
+ */
+export type Contradiction = 'binding' | 'size' | 'etag';
+
+export function contradictionOf(input: ProofInput): Contradiction | null {
+  const { head } = input;
+  if (head === null || head.uploadBinding === undefined) return null;
+  if (head.uploadBinding !== input.bindingToken) return 'binding';
+  if (head.contentLength !== input.declaredSizeBytes) return 'size';
+  if (
+    FINAL_ETAG_IS_DETERMINISTIC &&
+    input.manifest &&
+    unquote(head.etag) !== expectedMultipartEtag(input.manifest)
+  ) {
+    return 'etag';
   }
-  return 'proven';
+  return null;
 }

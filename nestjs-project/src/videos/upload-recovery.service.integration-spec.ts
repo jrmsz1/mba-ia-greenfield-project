@@ -18,7 +18,9 @@ import workerConfig from '../config/worker.config';
 import { JobPublisherService } from '../queue/job-publisher.service';
 import { PGBOSS, QUEUES } from '../queue/queue.constants';
 import { QueueModule } from '../queue/queue.module';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { BucketBootstrapService } from '../storage/bucket-bootstrap.service';
+import { UPLOAD_BINDING_METADATA_KEY } from '../storage/storage.constants';
 import { buildS3Clients, type S3Clients } from '../storage/s3-clients.provider';
 import { StorageUnavailableError } from '../storage/storage-errors';
 import { originalKey } from '../storage/storage-key';
@@ -184,5 +186,59 @@ describe('UploadRecoveryService (real PostgreSQL + MinIO)', () => {
 
     expect(await recovery.resolve(video.id)).toBe('pending');
     expect((await row(video.id)).processing_status).toBe('cancelled');
+  });
+
+  describe('positive contradiction (session gone, object at the key)', () => {
+    /** Aborts the session and writes an object at the video's exclusive key. */
+    const objectAtKey = async (
+      video: Video,
+      binding: string,
+      sizeBytes: number,
+    ): Promise<void> => {
+      const key = originalKey(video.id);
+      await storage.abortMultipartUpload(key, video.upload_id as string);
+      await clients.internal.send(
+        new PutObjectCommand({
+          Bucket: storage.bucket,
+          Key: key,
+          Body: randomBytes(sizeBytes),
+          Metadata: { [UPLOAD_BINDING_METADATA_KEY]: binding },
+        }),
+      );
+    };
+
+    const tokenOf = async (id: string): Promise<string> =>
+      (await recovery.loadWithToken(id)).upload_binding_token;
+
+    it('keeps an object with ANOTHER binding (identity not proven): failed/UPLOAD_INVALID, no job, no DeleteObject', async () => {
+      const video = await started();
+      await objectAtKey(video, 'foreign-binding', 12 * MIB);
+      const deleteObject = jest.spyOn(storage, 'deleteObject');
+
+      expect(await recovery.resolve(video.id)).toBe('failed');
+
+      expect(await row(video.id)).toMatchObject({
+        processing_status: 'failed',
+        failure_reason: 'UPLOAD_INVALID',
+      });
+      expect(deleteObject).not.toHaveBeenCalled();
+      expect(await storage.headObject(originalKey(video.id))).not.toBeNull();
+      expect(
+        await boss.findJobs(QUEUES.VIDEO_PROCESS, { key: video.id }),
+      ).toHaveLength(0);
+    });
+
+    it('deletes an object that carries THIS binding but the wrong size (identity proven, TD-02/TD-09)', async () => {
+      const video = await started();
+      await objectAtKey(video, await tokenOf(video.id), 1 * MIB);
+
+      expect(await recovery.resolve(video.id)).toBe('failed');
+
+      expect((await row(video.id)).failure_reason).toBe('UPLOAD_INVALID');
+      expect(await storage.headObject(originalKey(video.id))).toBeNull();
+      expect(
+        await boss.findJobs(QUEUES.VIDEO_PROCESS, { key: video.id }),
+      ).toHaveLength(0);
+    });
   });
 });

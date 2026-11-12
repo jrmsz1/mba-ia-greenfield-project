@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ManifestPart, ObjectHead } from '../storage/storage.service';
 import {
+  contradictionOf,
   evaluateCompletionProof,
   expectedMultipartEtag,
 } from './completion-proof';
@@ -61,5 +62,38 @@ describe('evaluateCompletionProof', () => {
 
   it('is contradicted by a final ETag that does not derive from the verified manifest', () => {
     expect(proof(head({ etag: '"deadbeef-2"' }))).toBe('contradicted');
+  });
+});
+
+describe('contradictionOf', () => {
+  const of = (h: ObjectHead | null) =>
+    contradictionOf({
+      head: h,
+      declaredSizeBytes: SIZE,
+      bindingToken: TOKEN,
+      manifest,
+    });
+
+  it('reports the binding FIRST, even when size and ETag also differ', () => {
+    expect(
+      of(
+        head({
+          uploadBinding: 'someone-else',
+          contentLength: SIZE + 1,
+          etag: '"deadbeef-2"',
+        }),
+      ),
+    ).toBe('binding');
+  });
+
+  it('reports size, then ETag, only for an object that carries this binding', () => {
+    expect(of(head({ contentLength: SIZE + 1 }))).toBe('size');
+    expect(of(head({ etag: '"deadbeef-2"' }))).toBe('etag');
+  });
+
+  it('reports nothing for a proven object, a missing object or a missing binding', () => {
+    expect(of(head())).toBeNull();
+    expect(of(null)).toBeNull();
+    expect(of(head({ uploadBinding: undefined }))).toBeNull();
   });
 });

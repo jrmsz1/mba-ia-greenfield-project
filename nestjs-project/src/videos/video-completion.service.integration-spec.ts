@@ -270,7 +270,7 @@ describe('VideoCompletionService (pinned MinIO + PostgreSQL)', () => {
     expect((await row(b.video.id)).processing_status).toBe('uploading');
   });
 
-  it('Gate 4: an object at the key with the declared size but another binding ends in failed/UPLOAD_INVALID; with HeadObject unavailable it stays completing', async () => {
+  it('Gate 4: an object at the key with the declared size but another binding is refused as failed/UPLOAD_INVALID, with no job, and is NOT deleted automatically; with HeadObject unavailable it stays completing', async () => {
     const { video, manifest } = await uploadedVideo();
     proxy.failNextComplete({ kind: 'drop-after-forward' });
     await completion.complete(video, manifest); // completing, object created
@@ -290,13 +290,28 @@ describe('VideoCompletionService (pinned MinIO + PostgreSQL)', () => {
       `UPDATE "videos" SET "upload_binding_token" = 'someone-else' WHERE id = $1`,
       [video.id],
     );
+    const deleteObject = jest.spyOn(storage, 'deleteObject');
+    const before = await storage.headObject(originalKey(video.id));
+
     await expect(
       completion.complete(await row(video.id), manifest),
     ).rejects.toBeInstanceOf(InvalidVideoStateException);
 
     const failed = await row(video.id);
+    expect(failed.processing_status).toBe('failed');
     expect(failed.failure_reason).toBe('UPLOAD_INVALID');
-    expect(await storage.headObject(originalKey(video.id))).toBeNull();
+    expect(await jobsFor(video.id)).toHaveLength(0);
+    // Identity not proven → never deleted automatically; kept as evidence.
+    expect(deleteObject).not.toHaveBeenCalled();
+    const after = await storage.headObject(originalKey(video.id));
+    expect(after).not.toBeNull();
+    expect(after?.etag).toBe(before?.etag);
+    // A repeated complete stays refused and still deletes nothing.
+    await expect(
+      completion.complete(await row(video.id), manifest),
+    ).rejects.toBeInstanceOf(InvalidVideoStateException);
+    expect(deleteObject).not.toHaveBeenCalled();
+    expect(await jobsFor(video.id)).toHaveLength(0);
   });
 
   it('a timeout or reset of Complete never returns the row to uploading nor marks it failed', async () => {
