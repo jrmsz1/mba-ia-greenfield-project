@@ -21,10 +21,10 @@ export class CreatePgBossSchema1794452175254 implements MigrationInterface {
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     const schema = queueSchema();
-    const existing: unknown[] = await queryRunner.query(
+    const existing = (await queryRunner.query(
       `SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = 'version'`,
       [schema],
-    );
+    )) as unknown[];
     if (existing.length > 0) return;
     await queryRunner.query(pgBossSchemaSql(schema));
   }
