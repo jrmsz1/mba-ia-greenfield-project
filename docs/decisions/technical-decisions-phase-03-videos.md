@@ -325,6 +325,10 @@ _Subprojects in scope:_
 
 **Decision:** A (system ffmpeg/ffprobe via spawn)
 
+**Revisions:**
+
+- 2026-11-11 — Duration ceiling classified separately (plan-build review): a media file that satisfies the accepted-format rule (MP4-family container and brand, H.264 yuv420p, audio absent or AAC, duration > 0) but whose duration exceeds MAX_VIDEO_DURATION_SECONDS fails with the permanent, non-retried reason DURATION_LIMIT_EXCEEDED instead of UNSUPPORTED_FORMAT; UNSUPPORTED_FORMAT is reserved for media outside the accepted-format rule. Decision A unchanged. Rationale: a valid format that exceeds the duration limit is not an incompatible format.
+
 ---
 
 ## TD-08: Processing input access and scratch storage

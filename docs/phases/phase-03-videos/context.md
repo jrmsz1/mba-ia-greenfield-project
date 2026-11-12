@@ -3,7 +3,7 @@ kind: phase
 name: phase-03-videos
 sources_mtime:
   docs/project-plan.md: "2026-11-10T20:13:08-03:00"
-  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-11T20:36:03-03:00"
+  docs/decisions/technical-decisions-phase-03-videos.md: "2026-11-11T21:58:35-03:00"
   docs/decisions/technical-decisions-openapi-docs-nestjs.md: "2026-11-10T20:13:08-03:00"
   docs/phases/phase-01-configuracao-base/context.md: "2026-11-10T20:13:08-03:00"
   docs/phases/phase-02-auth/context.md: "2026-11-10T20:13:08-03:00"
@@ -58,6 +58,7 @@ sources_mtime:
 | phase-03-videos/TD-05 | phase | Backend | Background job queue and job-loss prevention | decided | A (pg-boss) | `pg-boss@^12.x` |
 | phase-03-videos/TD-06 | phase | Backend | Media worker topology and responsibilities | decided | A (second entrypoint in nestjs-project) | — |
 | phase-03-videos/TD-07 | phase | Backend | FFmpeg/ffprobe toolchain, validity rules and resource limits | decided | A (system ffmpeg/ffprobe via spawn) | — |
+|     └─ Last revision: 2026-11-11 — Duration ceiling classified separately (plan-build review): a media file that… | | | | | | |
 | phase-03-videos/TD-08 | phase | Backend | Processing input access and scratch storage | decided | A (HTTP Range over presigned GET) | — |
 |     └─ Last revision: 2026-11-11 — Processing-input URL TTL key (AMB-3): the presigned GET the worker uses… | | | | | | |
 | phase-03-videos/TD-09 | phase | Backend | Video lifecycle state machine and failure handling | decided | A (orthogonal publication and processing_status) | — |
@@ -131,6 +132,9 @@ _Source files:_
 
 **Recommendation:** two fixed commands do not justify a wrapper, and the deprecated one is a poor foundation; everything the brief asks (duration, metadata, thumbnail, invalid files, limits) was demonstrated with the raw binaries.
 **Libraries:** —
+
+**Revisions:**
+- 2026-11-11 — Duration ceiling classified separately (plan-build review): a media file that satisfies the accepted-format rule (MP4-family container and brand, H.264 yuv420p, audio absent or AAC, duration > 0) but whose duration exceeds MAX_VIDEO_DURATION_SECONDS fails with the permanent, non-retried reason DURATION_LIMIT_EXCEEDED instead of UNSUPPORTED_FORMAT; UNSUPPORTED_FORMAT is reserved for media outside the accepted-format rule. Decision A unchanged. Rationale: a valid format that exceeds the duration limit is not an incompatible format.
 
 ### phase-03-videos/TD-08
 
@@ -444,6 +448,10 @@ _Revisions (copied from the decisions doc):_
 ### phase-03-videos/TD-07 — FFmpeg/ffprobe toolchain, validity rules and resource limits
 
 **Implementation impact:** **accepted media (human decision):** MP4 with H.264 video and optional AAC audio; everything else is rejected as unsupported (`failed`, reason `UNSUPPORTED_FORMAT`, permanent, no retry) with no transcoding promised. The rule is decided from the probe, **never from the file extension or the declared MIME**: container `format_name` contains `mp4` **and** `major_brand` belongs to an MP4-family allowlist (E5: MP4 → `isom`; MOV → `qt  ` and 3GP → `3gp6` share the same `format_name` and are told apart only by the brand; an MKV saved as `.mp4` reports `matroska,webm`), first video stream codec `h264` (HEVC, VP9… rejected) with pixel format `yuv420p` (a 4:4:4 stream is rejected as a playback-compatibility policy), audio absent or `aac` (MP3… rejected), duration > 0 (and ≤ a configured maximum); only the brand `isom` was observed in E5, so the allowlist is completed with fixtures in the plan; failure classification by cause: invalid media (permanent) vs storage/network (transient → retry) — classify by stderr pattern or by a `HeadObject` pre-check, not by exit code; the thumbnail position is a policy (a fraction of the duration with lower/upper bounds, start for very short clips); the thumbnail is written to a per-job temp directory, uploaded through the SDK, and the directory is removed in a `finally` block on success and failure; no transcoding, HLS or multiple resolutions in this phase (documented evolution).
+
+_Revisions (copied from the decisions doc):_
+
+- 2026-11-11 — Duration ceiling classified separately (plan-build review): a media file that satisfies the accepted-format rule (MP4-family container and brand, H.264 yuv420p, audio absent or AAC, duration > 0) but whose duration exceeds MAX_VIDEO_DURATION_SECONDS fails with the permanent, non-retried reason DURATION_LIMIT_EXCEEDED instead of UNSUPPORTED_FORMAT; UNSUPPORTED_FORMAT is reserved for media outside the accepted-format rule. Decision A unchanged. Rationale: a valid format that exceeds the duration limit is not an incompatible format.
 
 ### phase-03-videos/TD-08 — Processing input access and scratch storage
 
