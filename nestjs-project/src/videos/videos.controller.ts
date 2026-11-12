@@ -31,6 +31,7 @@ import {
 } from './dto/upload-status-response.dto';
 import {
   CompleteUploadResponseDto,
+  DeliveryUrlResponseDto,
   StartUploadResponseDto,
   VideoResponseDto,
 } from './dto/video-response.dto';
@@ -38,6 +39,7 @@ import { IdempotencyKey } from './decorators/idempotency-key.decorator';
 import { IdempotencyKeyPipe } from './idempotency-key.pipe';
 import { VideoAccessPolicy } from './video-access.policy';
 import { VideoCompletionService } from './video-completion.service';
+import { VideoDeliveryService } from './video-delivery.service';
 import {
   toStartUploadResponse,
   toVideoResponse,
@@ -63,6 +65,7 @@ export class VideosController {
     private readonly parts: VideoUploadPartsService,
     private readonly access: VideoAccessPolicy,
     private readonly completion: VideoCompletionService,
+    private readonly delivery: VideoDeliveryService,
   ) {}
 
   @Post()
@@ -284,6 +287,70 @@ export class VideosController {
       res.status(200);
     }
     return { id: video.public_id, processing_status: result.processingStatus };
+  }
+
+  @Get(':id/playback-url')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({
+    summary: 'Presigned streaming URL',
+    description:
+      'Owner-only, ready videos only. The URL points at the storage, which serves HTTP Range directly; request a new one before expires_at and keep the playback position. Shares a 60 URLs/hour window with download-url.',
+  })
+  @ApiResponse({ status: 200, type: DeliveryUrlResponseDto })
+  @ApiResponse({ status: 401, description: 'Not authenticated' })
+  @ApiResponse({
+    status: 404,
+    description: 'VIDEO_NOT_FOUND',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'VIDEO_NOT_READY',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'DELIVERY_URL_LIMIT_EXCEEDED',
+    schema: errorEnvelope,
+  })
+  async playbackUrl(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') publicId: string,
+  ): Promise<DeliveryUrlResponseDto> {
+    const video = await this.access.findOwnedVideoOrThrow(publicId, user.sub);
+    return await this.delivery.playbackUrl(video);
+  }
+
+  @Get(':id/download-url')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({
+    summary: 'Presigned download URL',
+    description:
+      'Owner-only, ready videos only. The storage answers with Content-Disposition: attachment and the sanitized original filename (RFC 6266). Shares a 60 URLs/hour window with playback-url.',
+  })
+  @ApiResponse({ status: 200, type: DeliveryUrlResponseDto })
+  @ApiResponse({ status: 401, description: 'Not authenticated' })
+  @ApiResponse({
+    status: 404,
+    description: 'VIDEO_NOT_FOUND',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'VIDEO_NOT_READY',
+    schema: errorEnvelope,
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'DELIVERY_URL_LIMIT_EXCEEDED',
+    schema: errorEnvelope,
+  })
+  async downloadUrl(
+    @CurrentUser() user: JwtPayload,
+    @Param('id') publicId: string,
+  ): Promise<DeliveryUrlResponseDto> {
+    const video = await this.access.findOwnedVideoOrThrow(publicId, user.sub);
+    return await this.delivery.downloadUrl(video);
   }
 
   @Delete(':id/upload')

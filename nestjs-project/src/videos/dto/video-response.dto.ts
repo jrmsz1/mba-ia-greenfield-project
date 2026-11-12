@@ -75,3 +75,18 @@ export class CompleteUploadResponseDto {
   @ApiProperty({ enum: VIDEO_PROCESSING_STATUSES, example: 'uploaded' })
   processing_status: VideoProcessingStatus;
 }
+
+/** Response of GET /videos/:id/playback-url and /download-url (TD-11). */
+export class DeliveryUrlResponseDto {
+  @ApiProperty({
+    description:
+      'Presigned GET on the public storage endpoint (temporary credential — do not log or store)',
+  })
+  url: string;
+
+  @ApiProperty({
+    format: 'date-time',
+    description: 'Request a new URL before this instant to keep playing',
+  })
+  expires_at: string;
+}

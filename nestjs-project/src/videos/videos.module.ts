@@ -7,6 +7,7 @@ import { Video } from './entities/video.entity';
 import { UploadRecoveryService } from './upload-recovery.service';
 import { VideoAccessPolicy } from './video-access.policy';
 import { VideoCompletionService } from './video-completion.service';
+import { VideoDeliveryService } from './video-delivery.service';
 import { VideoUploadPartsService } from './video-upload-parts.service';
 import { VideoUploadService } from './video-upload.service';
 import { VideosController } from './videos.controller';
@@ -25,6 +26,7 @@ import { VideosController } from './videos.controller';
     VideoUploadPartsService,
     UploadRecoveryService,
     VideoCompletionService,
+    VideoDeliveryService,
   ],
 })
 export class VideosModule {}

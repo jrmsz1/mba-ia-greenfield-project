@@ -947,6 +947,146 @@
           "videos"
         ]
       }
+    },
+    "/videos/{id}/playback-url": {
+      "get": {
+        "description": "Owner-only, ready videos only. The URL points at the storage, which serves HTTP Range directly; request a new one before expires_at and keep the playback position. Shares a 60 URLs/hour window with download-url.",
+        "operationId": "VideosController_playbackUrl",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryUrlResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "VIDEO_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "VIDEO_NOT_READY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "DELIVERY_URL_LIMIT_EXCEEDED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "access-token": []
+          }
+        ],
+        "summary": "Presigned streaming URL",
+        "tags": [
+          "videos"
+        ]
+      }
+    },
+    "/videos/{id}/download-url": {
+      "get": {
+        "description": "Owner-only, ready videos only. The storage answers with Content-Disposition: attachment and the sanitized original filename (RFC 6266). Shares a 60 URLs/hour window with playback-url.",
+        "operationId": "VideosController_downloadUrl",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryUrlResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "VIDEO_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "VIDEO_NOT_READY",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "DELIVERY_URL_LIMIT_EXCEEDED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorEnvelope"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "access-token": []
+          }
+        ],
+        "summary": "Presigned download URL",
+        "tags": [
+          "videos"
+        ]
+      }
     }
   },
   "info": {
@@ -1257,6 +1397,24 @@
         "required": [
           "id",
           "processing_status"
+        ]
+      },
+      "DeliveryUrlResponseDto": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Presigned GET on the public storage endpoint (temporary credential — do not log or store)"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Request a new URL before this instant to keep playing"
+          }
+        },
+        "required": [
+          "url",
+          "expires_at"
         ]
       },
       "ApiErrorEnvelope": {
