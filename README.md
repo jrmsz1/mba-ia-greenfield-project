@@ -33,9 +33,10 @@ Contém os fundamentos visuais do StreamTube — tokens (cores, tipografia, espa
 
 ## 📋 Pré-requisitos
 
-- Docker e Docker Compose
-- Node.js v25+ (para rodar os testes E2E do Playwright no host)
-- npm
+- Docker (Docker Desktop no Windows/macOS) com Docker Compose **2.24+** — é o único requisito do backend
+- Git (o setup confirma que os segredos locais ficam fora do versionamento)
+- ~5 GB livres em disco para imagens, dependências e dados; o teste opcional de 10 GiB precisa de ~30 GB
+- Node.js v25+ e npm apenas para os testes E2E do Playwright do frontend, no host
 
 ## 🏗️ Arquitetura
 
@@ -45,9 +46,9 @@ O projeto é um monorepo baseado em containers Docker. Cada subprojeto sobe sua 
 - **API** (NestJS 11) — regras de negócio, autenticação (JWT + refresh token rotation), envio de e-mails e acesso ao banco.
 - **Database** (PostgreSQL 17) — usuários, canais e tokens de autenticação.
 - **Email Service** (Mailpit) — captura os e-mails transacionais (confirmação de conta e recuperação de senha) em uma UI local.
-- **Video Worker** (FFmpeg) — processamento de vídeos *(planejado — Fase 03)*.
-- **Object Storage** (S3/MinIO) — arquivos de vídeo e thumbnails *(planejado — Fase 03)*.
-- **Message Queue** — fila de processamento de vídeos *(planejado — Fase 03)*.
+- **Video Worker** (FFmpeg) — processamento assíncrono dos vídeos: duração, metadados e thumbnail (Fase 03).
+- **Object Storage** (MinIO, S3-compatível) — vídeos e thumbnails; upload multipart direto do cliente por URLs pré-assinadas, streaming por HTTP Range e download (Fase 03).
+- **Message Queue** (pg-boss sobre o PostgreSQL) — fila de processamento entre a API e o worker (Fase 03).
 
 O diagrama de arquitetura completo (C4) está em `docs/diagrams/software-arch.mermaid`.
 
@@ -55,32 +56,49 @@ O diagrama de arquitetura completo (C4) está em `docs/diagrams/software-arch.me
 
 Os dois subprojetos têm stacks Docker **separadas**. Suba primeiro o backend, rode as migrations e depois o frontend.
 
-### 1. Backend (NestJS + PostgreSQL + Mailpit)
+### 1. Backend — Quick Start (NestJS + PostgreSQL + MinIO + worker + Mailpit)
 
-```bash
-cd nestjs-project
+Um comando prepara e sobe tudo; outro verifica. Não é preciso configurar variáveis no shell nem conhecer MinIO, pg-boss ou políticas S3.
 
-# Sobe API, banco e Mailpit
-docker compose up -d
+| | Windows (PowerShell) | Linux / macOS |
+|---|---|---|
+| **Preparar e subir** | `.\scripts\setup.ps1` | `./scripts/setup.sh` |
+| **Verificação rápida** (saúde, isolamento de credenciais, suítes essenciais) | `.\scripts\verify.ps1` | `./scripts/verify.sh` |
+| **Regressão completa** (unit, integração, e2e, mídia, `tsc`, lint) | `.\scripts\verify.ps1 -Full` | `./scripts/verify.sh --full` |
 
-# Instala dependências (apenas na primeira vez)
-docker compose exec nestjs-api npm install
+> Se o PowerShell bloquear scripts: `powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1`.
 
-# Cria o schema do banco (obrigatório — synchronize está desabilitado)
-docker compose exec nestjs-api npm run migration:run
+O setup (seguro para reexecutar; nunca apaga dados nem sobrescreve credenciais existentes):
 
-# Sobe o servidor de desenvolvimento em watch mode
-docker compose exec -d nestjs-api npm run start:dev
-```
+1. confere Docker, Docker Compose e espaço em disco;
+2. cria `nestjs-project/.env` a partir do `.env.example` (somente configurações não sensíveis);
+3. gera as credenciais em `.local/secrets/` — diretório dentro do checkout, **ignorado pelo Git e fora dos volumes montados**, com permissão só do dono; os valores nunca são impressos;
+4. sobe PostgreSQL, Mailpit e MinIO e provisiona o MinIO (buckets, políticas e identidades de menor privilégio) de forma idempotente;
+5. instala as dependências, compila e aplica as migrations pendentes;
+6. sobe a API e o worker e confirma que respondem.
 
 Serviços disponíveis:
 
 | Serviço | URL / Porta |
 |---------|-------------|
 | API NestJS | http://localhost:3000 |
+| MinIO (API S3 / console) | http://localhost:9000 / http://localhost:9001 |
 | PostgreSQL | `localhost:5432` (db/user/senha: `streamtube`) |
 | Mailpit (UI de e-mails) | http://localhost:8025 |
-| Swagger (opcional) | http://localhost:3000/api/docs — habilite com `SWAGGER_ENABLED=true` |
+| Swagger (opcional) | http://localhost:3000/api/docs — habilite com `SWAGGER_ENABLED=true` em `nestjs-project/.env` |
+
+Credenciais (uma identidade por processo; o root do MinIO só existe no MinIO e no contêiner de provisionamento):
+
+| Arquivo em `.local/secrets/` | Usado por |
+|---|---|
+| `minio.env` | serviço `minio` (root, administrativo) |
+| `api.env` | `nestjs-api` (identidade da API + identidade read-only de entrega) |
+| `worker.env` | `worker` (identidade do worker) |
+| `test-api.env`, `test-worker.env` | contêineres de teste efêmeros (identidades restritas ao bucket de testes) |
+| `provision.env` | contêiner de provisionamento sob demanda |
+| `maintenance.env` | contêiner de manutenção do bucket de testes (`scripts/test-storage-maintenance.*`, nunca automático) |
+
+Portas alternativas (para não conflitar com outra cópia): `STREAMTUBE_API_PORT`, `STREAMTUBE_DB_PORT`, `STREAMTUBE_MINIO_PORT`, `STREAMTUBE_MINIO_CONSOLE_PORT`, `STREAMTUBE_MAILPIT_SMTP_PORT`, `STREAMTUBE_MAILPIT_UI_PORT`.
 
 ### 2. Frontend (Next.js)
 
@@ -103,14 +121,16 @@ A aplicação ficará disponível em **http://localhost:3001**.
 
 ### Backend (Jest)
 
+As suítes de integração, e2e e mídia rodam em **contêineres de teste efêmeros** (`nestjs-project/compose.test.yaml`), com apenas as identidades restritas de teste, o banco `streamtube_test`, o bucket `streamtube-videos-test` e o schema de fila `pgboss_test` — nunca nos serviços em execução e nunca com credenciais root ou de produção. O caminho simples é `./scripts/verify.sh --full` (ou `.\scripts\verify.ps1 -Full`); os comandos equivalentes:
+
 ```bash
 cd nestjs-project
-docker compose exec nestjs-api npm test               # unitários + integração
-docker compose exec nestjs-api npm run test:e2e       # end-to-end (HTTP via supertest)
-docker compose exec nestjs-api npm run test:cov       # cobertura
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm test            # unitários + integração
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm run test:e2e    # end-to-end (HTTP via supertest)
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-worker npm run test:media  # FFmpeg/ffprobe (imagem do worker)
 ```
 
-Sufixos: `*.spec.ts` (unitário), `*.integration-spec.ts` (integração com banco real), `*.e2e-spec.ts` (end-to-end). Testes de integração/e2e rodam com `--runInBand`.
+Sufixos: `*.spec.ts` (unitário), `*.integration-spec.ts` (integração com banco real), `*.e2e-spec.ts` (end-to-end). Testes de integração/e2e rodam em série. A verificação de upload de 10 GiB é separada e nunca roda nesses comandos.
 
 ### Frontend (Vitest + Playwright)
 

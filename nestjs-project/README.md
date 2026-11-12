@@ -33,10 +33,9 @@ $ npm install
 
 ### Object storage (MinIO)
 
-The `minio` Compose service builds a pinned MinIO release from `docker/minio/Dockerfile`; the build fails if the binary's SHA-256 does not match. Set `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` in your local `.env` (they are empty in `.env.example`), then check readiness:
+The `minio` Compose service builds a pinned MinIO release from `docker/minio/Dockerfile`; the build fails if the binary's SHA-256 does not match. **Do not put credentials in `.env`.** Run the setup script from the repository root (`../scripts/setup.sh` or `..\scripts\setup.ps1`): it generates one credential file per service in `../.local/secrets/` (git-ignored, outside every bind mount), then provisions the buckets, policies and least-privilege identities with the on-demand container in `docker/storage-provision/` (idempotent, never deletes or overwrites). The API and the worker only verify the bucket at startup (HeadBucket) — they never create it. Check readiness:
 
 ```bash
-docker compose up -d minio
 docker compose exec minio curl -fsS http://localhost:9000/minio/health/ready   # exit code 0
 ```
 
@@ -55,7 +54,7 @@ $ npm run start:prod
 
 ## Run tests
 
-All commands run **inside the container** (`docker compose exec nestjs-api ...`), with the infrastructure up (`docker compose up -d`).
+Unit tests can run in `nestjs-api`; **integration, e2e and media suites run only in the ephemeral test containers** of `compose.test.yaml` (`test-api`, `test-worker`), which receive just the restricted test identities and use only `DB_TEST_NAME`, `S3_TEST_BUCKET` and `PGBOSS_TEST_SCHEMA`. The operational containers hold no test identity, so those suites refuse to start there. The simplest path is `../scripts/verify.sh` (quick) or `../scripts/verify.sh --full`.
 
 | Command | What runs | Touches a database |
 |---|---|---|
@@ -68,8 +67,9 @@ All commands run **inside the container** (`docker compose exec nestjs-api ...`)
 
 ```bash
 docker compose exec nestjs-api npm run test:unit
-docker compose exec nestjs-api npm run test:integration
-docker compose exec nestjs-api npm run test:e2e
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm run test:integration
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm run test:e2e
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-worker npm run test:media
 ```
 
 ### Test database setup (once per developer)
