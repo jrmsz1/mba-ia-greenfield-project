@@ -1,7 +1,7 @@
 # phase-03-videos — Progress
 
 **Status:** in_progress
-**SIs:** 11/17 completed
+**SIs:** 12/17 completed
 
 ## Required Technical Verification Gates
 
@@ -135,9 +135,14 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - openapi.json regenerated (route with 200/202/400/401/404/409/429/503). Out of scope, noted as a separate task: openapi:export runs through ts-node without the Swagger CLI plugin, so EVERY request DTO schema is exported with empty properties (pre-existing since 2953d69, e.g. RegisterDto).
 
 ### SI-03.12 — Infra: entrypoint do worker e serviço Compose `worker`
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** completed
+- **Tests:** 1 unit (worker.module.spec.ts, compile test); regression npm test 54 suites / 381, test:e2e 6 suites / 83, tsc 0, eslint baseline
+- **Observations:**
+  - Was blocked on AC #1: the dev DB had synchronize residue, an empty `migrations` table and no pg-boss schema. The user authorized a non-destructive baseline, executed with a verified backup and proven structural equivalence (docs/phases/phase-03-videos/dev-db-baseline.md); dev data preserved.
+  - All 4 ACs verified on the dev DB: `docker compose up -d worker` running, `docker compose port worker` empty, uid 10001 `worker` (nologin); `docker compose stop worker` → exit 0 in 850 ms, 0 active jobs. Earlier isolated run on the test resources: same results (384 ms).
+  - ffmpeg/ffprobe pinned to Debian 13 package 7:7.1.5-0+deb13u1 (`ffmpeg -version` / `ffprobe -version` → 7.1.5-0+deb13u1).
+  - The worker mounts the code at /srv/app: /home/node is 0700 in the node base image, so a non-root user other than `node` cannot traverse it.
+  - Shared roots extracted to src/app-roots.ts (ConfigModule + TypeORM) and used by AppModule and WorkerModule; no nest-cli.json change was needed — `nest build` (tsc) already emits dist/worker/main.worker.js, which `start:worker` and the image CMD run.
 
 ### SI-03.13 — Probe de mídia, regra de formato e thumbnail (Verification Gate 6)
 - **Status:** pending

@@ -15,6 +15,28 @@ services:
       minio:
         condition: service_healthy
 
+  # Video worker (phase-03-videos/TD-06, TD-16): second entrypoint of the same
+  # code (mounted), FFmpeg pinned in its image, non-root, no published ports.
+  # It reads the same .env as the API. Run `npm run build` in nestjs-api first:
+  # the worker executes the compiled dist/worker/main.worker.js.
+  worker:
+    build:
+      context: ./docker/worker
+    volumes:
+      - .:/srv/app
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    # SIGTERM → enableShutdownHooks → boss.stop({ graceful: true }).
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "${WORKER_CPU_LIMIT:-2}"
+          memory: "${WORKER_MEMORY_LIMIT:-2g}"
+
   # Pinned, SHA-256-verified MinIO (phase-03-videos/TD-03, TD-16).
   # Credentials come only from the local .env.
   minio:
