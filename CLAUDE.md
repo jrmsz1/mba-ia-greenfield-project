@@ -26,6 +26,8 @@ See `docs/diagrams/software-arch.mermaid` for the full diagram. Key containers:
 - **Message Queue** (pg-boss on PostgreSQL, phase-03-videos/TD-05) → video processing job queue
 - **Email Service** (SMTP) → account confirmation and password recovery
 
+**Videos (Phase 03, backend):** the module layout, the `/videos` endpoints, the status lifecycle, the `video.process` / `video.reconcile` queues, the worker and the storage layout are documented once, in `nestjs-project/CLAUDE.md` → "Videos (Phase 03)".
+
 ## Docker Networking
 
 This project runs entirely in Docker containers. When configuring connections between services (database, cache, queue, etc.), **always use the Docker Compose service name** as the host — never `localhost` or `127.0.0.1`.
