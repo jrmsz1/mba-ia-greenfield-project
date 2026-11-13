@@ -1,0 +1,67 @@
+OK   api       HeadBucket                                               expected=ALLOW  got=ALLOW
+OK   api       CreateBucket (other)                                     expected=DENY   got=DENY
+OK   api       CreateBucket (configured, already exists)                expected=DENY   got=DENY
+MISS api       ListBuckets                                              expected=DENY   got=ALLOW
+OK   api       ListObjectsV2 (bucket)                                   expected=ALLOW  got=ALLOW
+OK   api       CreateMultipartUpload (original, +metadata)              expected=ALLOW  got=ALLOW
+OK   api       UploadPart (direct, own key)                             expected=ALLOW  got=ALLOW
+OK   api       UploadPart via URL presigned by this identity            expected=ALLOW  got=ALLOW
+OK   api       ListParts                                                expected=ALLOW  got=ALLOW
+OK   api       ListMultipartUploads (prefix)                            expected=ALLOW  got=ALLOW
+OK   api       CompleteMultipartUpload                                  expected=ALLOW  got=ALLOW
+OK   api       AbortMultipartUpload                                     expected=ALLOW  got=ALLOW
+OK   api       HeadObject (original)                                    expected=ALLOW  got=ALLOW
+OK   api       GetObject (original)                                     expected=ALLOW  got=ALLOW
+OK   api       GetObject (thumbnail)                                    expected=DENY   got=DENY
+OK   api       Presigned GET original + Range 0-1023 → 206              expected=ALLOW  got=ALLOW  [206 bytes 0-1023/262144 disposition=attachment; filename="x.mp4" signer=streamtube-api]
+OK   api       PutObject (original, plain PUT)                          expected=ALLOW  got=ALLOW
+OK   api       PutObject (thumbnail)                                    expected=DENY   got=DENY
+OK   api       PutObject (outside videos/)                              expected=DENY   got=DENY
+OK   api       DeleteObject (original)                                  expected=ALLOW  got=ALLOW
+OK   worker    HeadBucket                                               expected=ALLOW  got=ALLOW
+OK   worker    CreateBucket (other)                                     expected=DENY   got=DENY
+OK   worker    CreateBucket (configured, already exists)                expected=DENY   got=DENY
+MISS worker    ListBuckets                                              expected=DENY   got=ALLOW
+OK   worker    ListObjectsV2 (bucket)                                   expected=ALLOW  got=ALLOW
+OK   worker    CreateMultipartUpload (original, +metadata)              expected=DENY   got=DENY
+OK   worker    UploadPart (direct, own key)                             expected=DENY   got=DENY
+OK   worker    UploadPart via URL presigned by this identity            expected=DENY   got=DENY
+OK   worker    ListParts                                                expected=ALLOW  got=ALLOW
+OK   worker    ListMultipartUploads (prefix)                            expected=ALLOW  got=ALLOW
+OK   worker    CompleteMultipartUpload                                  expected=DENY   got=DENY
+OK   worker    AbortMultipartUpload                                     expected=ALLOW  got=ALLOW
+OK   worker    HeadObject (original)                                    expected=ALLOW  got=ALLOW
+OK   worker    GetObject (original)                                     expected=ALLOW  got=ALLOW
+OK   worker    GetObject (thumbnail)                                    expected=DENY   got=DENY
+OK   worker    Presigned GET original + Range 0-1023 → 206              expected=ALLOW  got=ALLOW  [206 bytes 0-1023/262144 disposition=attachment; filename="x.mp4" signer=streamtube-worker]
+OK   worker    PutObject (original, plain PUT)                          expected=DENY   got=DENY
+OK   worker    PutObject (thumbnail)                                    expected=ALLOW  got=ALLOW
+OK   worker    PutObject (outside videos/)                              expected=DENY   got=DENY
+OK   worker    DeleteObject (original)                                  expected=ALLOW  got=ALLOW
+OK   delivery  HeadBucket                                               expected=DENY   got=DENY
+OK   delivery  CreateBucket (other)                                     expected=DENY   got=DENY
+OK   delivery  CreateBucket (configured, already exists)                expected=DENY   got=DENY
+OK   delivery  ListBuckets                                              expected=DENY   got=DENY
+OK   delivery  ListObjectsV2 (bucket)                                   expected=DENY   got=DENY
+OK   delivery  CreateMultipartUpload (original, +metadata)              expected=DENY   got=DENY
+OK   delivery  UploadPart (direct, own key)                             expected=DENY   got=DENY
+OK   delivery  UploadPart via URL presigned by this identity            expected=DENY   got=DENY
+OK   delivery  ListParts                                                expected=DENY   got=DENY
+OK   delivery  ListMultipartUploads (prefix)                            expected=DENY   got=DENY
+OK   delivery  CompleteMultipartUpload                                  expected=DENY   got=DENY
+OK   delivery  AbortMultipartUpload                                     expected=DENY   got=DENY
+OK   delivery  HeadObject (original)                                    expected=ALLOW  got=ALLOW
+OK   delivery  GetObject (original)                                     expected=ALLOW  got=ALLOW
+OK   delivery  GetObject (thumbnail)                                    expected=DENY   got=DENY
+OK   delivery  Presigned GET original + Range 0-1023 → 206              expected=ALLOW  got=ALLOW  [206 bytes 0-1023/262144 disposition=attachment; filename="x.mp4" signer=streamtube-delivery]
+OK   delivery  PutObject (original, plain PUT)                          expected=DENY   got=DENY
+OK   delivery  PutObject (thumbnail)                                    expected=DENY   got=DENY
+OK   delivery  PutObject (outside videos/)                              expected=DENY   got=DENY
+OK   delivery  DeleteObject (original)                                  expected=DENY   got=DENY
+OK   worker    cross: ListParts on API session (reconciler)             expected=ALLOW  got=ALLOW
+OK   worker    cross: UploadPart into API session                       expected=DENY   got=DENY
+OK   worker    cross: Complete API session                              expected=DENY   got=DENY
+OK   delivery  cross: ListParts on API session                          expected=DENY   got=DENY
+OK   worker    cross: Abort API session (reconciler)                    expected=ALLOW  got=ALLOW
+OK   client    presigned part URL replayed as plain PUT                 expected=DENY   got=DENY
+SUMMARY total=66 matched=64 mismatched=2

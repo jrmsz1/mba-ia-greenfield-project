@@ -8,6 +8,7 @@ import {
   TokenExpiredException,
   TokenReuseDetectedException,
 } from '../exceptions/domain.exception';
+import { StorageUnavailableException } from '../../videos/video.exceptions';
 
 describe('DomainExceptionFilter', () => {
   let filter: DomainExceptionFilter;
@@ -94,6 +95,24 @@ describe('DomainExceptionFilter', () => {
       error: 'TOKEN_EXPIRED',
       message: exception.message,
     });
+  });
+
+  it('sets Retry-After for a retryable domain exception and not otherwise', () => {
+    const setHeader = jest.fn();
+    const host = {
+      ...mockHost,
+      switchToHttp: () => ({
+        getResponse: () => ({ status: mockStatus, setHeader }),
+        getRequest: () => ({ url: '/test', method: 'POST' }),
+      }),
+    } as unknown as ArgumentsHost;
+
+    filter.catch(new StorageUnavailableException(7), host);
+    filter.catch(new TokenExpiredException(), host);
+
+    expect(setHeader).toHaveBeenCalledTimes(1);
+    expect(setHeader).toHaveBeenCalledWith('Retry-After', '7');
+    expect(mockStatus).toHaveBeenCalledWith(503);
   });
 
   it('maps TokenReuseDetectedException to 401 with TOKEN_REUSE_DETECTED', () => {

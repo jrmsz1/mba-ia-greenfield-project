@@ -33,9 +33,10 @@ Contém os fundamentos visuais do StreamTube — tokens (cores, tipografia, espa
 
 ## 📋 Pré-requisitos
 
-- Docker e Docker Compose
-- Node.js v25+ (para rodar os testes E2E do Playwright no host)
-- npm
+- Docker (Docker Desktop no Windows/macOS) com Docker Compose **2.24+** — é o único requisito do backend
+- Git (o setup confirma que os segredos locais ficam fora do versionamento)
+- ~5 GB livres em disco para imagens, dependências e dados; o teste opcional de 10 GiB precisa de ~30 GB
+- Node.js v25+ e npm apenas para os testes E2E do Playwright do frontend, no host
 
 ## 🏗️ Arquitetura
 
@@ -45,9 +46,9 @@ O projeto é um monorepo baseado em containers Docker. Cada subprojeto sobe sua 
 - **API** (NestJS 11) — regras de negócio, autenticação (JWT + refresh token rotation), envio de e-mails e acesso ao banco.
 - **Database** (PostgreSQL 17) — usuários, canais e tokens de autenticação.
 - **Email Service** (Mailpit) — captura os e-mails transacionais (confirmação de conta e recuperação de senha) em uma UI local.
-- **Video Worker** (FFmpeg) — processamento de vídeos *(planejado — Fase 03)*.
-- **Object Storage** (S3/MinIO) — arquivos de vídeo e thumbnails *(planejado — Fase 03)*.
-- **Message Queue** — fila de processamento de vídeos *(planejado — Fase 03)*.
+- **Video Worker** (FFmpeg) — processamento assíncrono dos vídeos: duração, metadados e thumbnail (Fase 03).
+- **Object Storage** (MinIO, S3-compatível) — vídeos e thumbnails; upload multipart direto do cliente por URLs pré-assinadas, streaming por HTTP Range e download (Fase 03).
+- **Message Queue** (pg-boss sobre o PostgreSQL) — fila de processamento entre a API e o worker (Fase 03).
 
 O diagrama de arquitetura completo (C4) está em `docs/diagrams/software-arch.mermaid`.
 
@@ -55,32 +56,49 @@ O diagrama de arquitetura completo (C4) está em `docs/diagrams/software-arch.me
 
 Os dois subprojetos têm stacks Docker **separadas**. Suba primeiro o backend, rode as migrations e depois o frontend.
 
-### 1. Backend (NestJS + PostgreSQL + Mailpit)
+### 1. Backend — Quick Start (NestJS + PostgreSQL + MinIO + worker + Mailpit)
 
-```bash
-cd nestjs-project
+Um comando prepara e sobe tudo; outro verifica. Não é preciso configurar variáveis no shell nem conhecer MinIO, pg-boss ou políticas S3.
 
-# Sobe API, banco e Mailpit
-docker compose up -d
+| | Windows (PowerShell) | Linux / macOS |
+|---|---|---|
+| **Preparar e subir** | `.\scripts\setup.ps1` | `./scripts/setup.sh` |
+| **Verificação rápida** (saúde, isolamento de credenciais, suítes essenciais) | `.\scripts\verify.ps1` | `./scripts/verify.sh` |
+| **Regressão completa** (unit, integração, e2e, mídia, `tsc`, lint) | `.\scripts\verify.ps1 -Full` | `./scripts/verify.sh --full` |
 
-# Instala dependências (apenas na primeira vez)
-docker compose exec nestjs-api npm install
+> Se o PowerShell bloquear scripts: `powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1`.
 
-# Cria o schema do banco (obrigatório — synchronize está desabilitado)
-docker compose exec nestjs-api npm run migration:run
+O setup (seguro para reexecutar; nunca apaga dados nem sobrescreve credenciais existentes):
 
-# Sobe o servidor de desenvolvimento em watch mode
-docker compose exec -d nestjs-api npm run start:dev
-```
+1. confere Docker, Docker Compose e espaço em disco;
+2. cria `nestjs-project/.env` a partir do `.env.example` (somente configurações não sensíveis);
+3. gera as credenciais em `.local/secrets/` — diretório dentro do checkout, **ignorado pelo Git e fora dos volumes montados**, com permissão só do dono; os valores nunca são impressos;
+4. sobe PostgreSQL, Mailpit e MinIO e provisiona o MinIO (buckets, políticas e identidades de menor privilégio) de forma idempotente;
+5. instala as dependências, compila e aplica as migrations pendentes;
+6. sobe a API e o worker e confirma que respondem.
 
 Serviços disponíveis:
 
 | Serviço | URL / Porta |
 |---------|-------------|
 | API NestJS | http://localhost:3000 |
+| MinIO (API S3 / console) | http://localhost:9000 / http://localhost:9001 |
 | PostgreSQL | `localhost:5432` (db/user/senha: `streamtube`) |
 | Mailpit (UI de e-mails) | http://localhost:8025 |
-| Swagger (opcional) | http://localhost:3000/api/docs — habilite com `SWAGGER_ENABLED=true` |
+| Swagger (opcional) | http://localhost:3000/api/docs — habilite com `SWAGGER_ENABLED=true` em `nestjs-project/.env` |
+
+Credenciais (uma identidade por processo; o root do MinIO só existe no MinIO e no contêiner de provisionamento):
+
+| Arquivo em `.local/secrets/` | Usado por |
+|---|---|
+| `minio.env` | serviço `minio` (root, administrativo) |
+| `api.env` | `nestjs-api` (identidade da API + identidade read-only de entrega) |
+| `worker.env` | `worker` (identidade do worker) |
+| `test-api.env`, `test-worker.env` | contêineres de teste efêmeros (identidades restritas ao bucket de testes) |
+| `provision.env` | contêiner de provisionamento sob demanda |
+| `maintenance.env` | contêiner de manutenção do bucket de testes (`scripts/test-storage-maintenance.*`, nunca automático) |
+
+Portas alternativas (para não conflitar com outra cópia): `STREAMTUBE_API_PORT`, `STREAMTUBE_DB_PORT`, `STREAMTUBE_MINIO_PORT`, `STREAMTUBE_MINIO_CONSOLE_PORT`, `STREAMTUBE_MAILPIT_SMTP_PORT`, `STREAMTUBE_MAILPIT_UI_PORT`. Para uma segunda cópia na mesma máquina, defina também `COMPOSE_PROJECT_NAME` (ex.: `export COMPOSE_PROJECT_NAME=streamtube-copia` ou `$env:COMPOSE_PROJECT_NAME='streamtube-copia'`) antes do setup e do verify: sem ele, o Compose usa o nome da pasta (`nestjs-project`) e a cópia passaria a usar os contêineres e volumes da primeira.
 
 ### 2. Frontend (Next.js)
 
@@ -103,14 +121,27 @@ A aplicação ficará disponível em **http://localhost:3001**.
 
 ### Backend (Jest)
 
+As suítes de integração, e2e e mídia rodam em **contêineres de teste efêmeros** (`nestjs-project/compose.test.yaml`), com apenas as identidades restritas de teste, o banco `streamtube_test`, o bucket `streamtube-videos-test` e o schema de fila `pgboss_test` — nunca nos serviços em execução e nunca com credenciais root ou de produção. O caminho simples é `./scripts/verify.sh --full` (ou `.\scripts\verify.ps1 -Full`); os comandos equivalentes:
+
 ```bash
 cd nestjs-project
-docker compose exec nestjs-api npm test               # unitários + integração
-docker compose exec nestjs-api npm run test:e2e       # end-to-end (HTTP via supertest)
-docker compose exec nestjs-api npm run test:cov       # cobertura
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm test            # unitários + integração
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm run test:e2e    # end-to-end (HTTP via supertest)
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-worker npm run test:media  # FFmpeg/ffprobe (imagem do worker)
 ```
 
-Sufixos: `*.spec.ts` (unitário), `*.integration-spec.ts` (integração com banco real), `*.e2e-spec.ts` (end-to-end). Testes de integração/e2e rodam com `--runInBand`.
+Sufixos: `*.spec.ts` (unitário), `*.integration-spec.ts` (integração com banco real), `*.e2e-spec.ts` (end-to-end). Testes de integração/e2e rodam em série. A verificação de upload de 10 GiB é separada e nunca roda nesses comandos.
+
+Se uma suíte falhar no `verify`, o console mostra as últimas linhas e o log completo fica em `.local/verify-logs/` (ignorado pelo Git), com os valores das credenciais locais, as assinaturas de URLs pré-assinadas e tokens Bearer mascarados.
+
+**Verificação opcional de 10 GiB (Gate 3).** Não faz parte do Quick Start. O resultado aprovado (arquivo de exatamente 10 737 418 240 B, upload multipart direto ao MinIO com interrupção e retomada, processamento, Range e download, 16/16 critérios) está em [`docs/phases/phase-03-videos/verification-10gib.md`](docs/phases/phase-03-videos/verification-10gib.md). Para reproduzir (precisa de ~30 GB livres; usa apenas o banco, o bucket e a fila de testes):
+
+```bash
+cd nestjs-project
+docker volume create streamtube-gate3-media
+docker run --rm -v streamtube-gate3-media:/gate3 alpine chown 10001:10001 /gate3
+docker compose -f compose.yaml -f compose.test.yaml run --rm -v streamtube-gate3-media:/gate3 test-worker npm run verify:large-upload
+```
 
 ### Frontend (Vitest + Playwright)
 
@@ -124,7 +155,7 @@ Sufixos: `*.test.ts(x)` (unitário), `*.integration.test.ts(x)` (Route Handlers 
 
 ## ✅ Funcionalidades implementadas
 
-**Fase 01 — Configuração base** e **Fase 02 — Autenticação** estão concluídas (backend + frontend).
+**Fase 01 — Configuração base** e **Fase 02 — Autenticação** estão concluídas (backend + frontend). **Fase 03 — Upload e processamento de vídeos** está concluída no backend (sem telas nesta fase).
 
 ### Autenticação (Fase 02)
 
@@ -151,6 +182,23 @@ Telas e Route Handlers BFF (`next-frontend`):
 
 Segurança: senhas com **Argon2**, **JWT** com `JwtAuthGuard` global (opt-out via `@Public()`), **rotação de refresh token** com detecção de reuso, **rate limiting** (`ThrottlerGuard`) nos endpoints de auth, e sessão no navegador via **iron-session** (cookies HTTP-only).
 
+### Upload e processamento de vídeos (Fase 03, backend)
+
+Upload de até 10 GiB em multipart direto para o MinIO (URLs pré-assinadas, retomável), vídeo criado como rascunho, processamento assíncrono pelo worker (fila pg-boss, FFmpeg: duração, metadados e thumbnail), identificador público curto e único, streaming por HTTP Range e download. Todos os endpoints exigem autenticação e são restritos ao dono do canal.
+
+| Método & Rota | Descrição |
+|---------------|-----------|
+| `POST /videos` | Inicia o upload (cria o rascunho e a sessão multipart) |
+| `POST /videos/:id/upload/part-urls` | Emite URLs pré-assinadas para as partes |
+| `GET /videos/:id/upload` | Estado do upload e partes faltantes (retomada) |
+| `POST /videos/:id/upload/complete` | Conclui o upload e enfileira o processamento |
+| `DELETE /videos/:id/upload` | Cancela um upload incompleto |
+| `GET /videos/:id` | Estado do vídeo (dono) |
+| `GET /videos/:id/playback-url` | URL de streaming (HTTP Range), somente `ready` |
+| `GET /videos/:id/download-url` | URL de download, somente `ready` |
+
+Evidências: `docs/phases/phase-03-videos/` (gates, verificação de 10 GiB e auditoria).
+
 ## 🛠️ Estrutura do Projeto
 
 ```
@@ -160,7 +208,8 @@ green-field-ia-project/
 │   ├── phases/                          # Planos e implementação por fase
 │   │   ├── phase-01-configuracao-base/
 │   │   ├── phase-02-auth/               # Auth (backend)
-│   │   └── phase-02-auth-frontend/      # Auth (frontend)
+│   │   ├── phase-02-auth-frontend/      # Auth (frontend)
+│   │   └── phase-03-videos/             # Upload e processamento de vídeos (backend)
 │   └── diagrams/
 │       └── software-arch.mermaid        # Diagrama de arquitetura (C4)
 ├── nestjs-project/                      # Backend API (NestJS 11)
@@ -171,9 +220,15 @@ green-field-ia-project/
 │   │   ├── mail/                        # Envio de e-mails (templates Handlebars)
 │   │   ├── common/                      # Filtros, pipes e exceptions de domínio
 │   │   ├── config/                      # Configs namespaced (Joi)
-│   │   └── database/                    # data-source, migrations e seeds
+│   │   ├── database/                    # data-source, migrations e seeds
+│   │   ├── videos/                      # Upload, conclusão, entrega (streaming/download)
+│   │   ├── storage/                     # Cliente S3/MinIO e URLs pré-assinadas
+│   │   ├── queue/                       # Fila pg-boss
+│   │   ├── media/                       # ffprobe/ffmpeg: validação, metadados, thumbnail
+│   │   └── worker/                      # Worker de vídeo e reconciliador
 │   ├── test/                            # Testes e2e
-│   ├── compose.yaml                     # Docker Compose (API + PostgreSQL + Mailpit)
+│   ├── compose.yaml                     # Docker Compose (API + worker + PostgreSQL + MinIO + Mailpit)
+│   ├── compose.test.yaml                # Containers de teste efêmeros (test-api, test-worker)
 │   └── Dockerfile.dev
 ├── next-frontend/                       # Frontend (Next.js 16, App Router)
 │   ├── app/                             # Rotas, layouts, páginas e Route Handlers BFF
@@ -195,7 +250,7 @@ green-field-ia-project/
 |------|-----------|--------|
 | **01** | Configuração Base do Projeto | ✅ Concluída |
 | **02** | Cadastro, Login e Gerenciamento de Conta | ✅ Concluída |
-| **03** | Upload e Processamento de Vídeos | ⏳ Planejada |
+| **03** | Upload e Processamento de Vídeos | ✅ Concluída (backend; branch `feature/phase-03-videos`, ainda não integrada em `dev`) |
 | **04** | Gerenciamento de Vídeos e Canal | ⏳ Planejada |
 | **05** | Página de Visualização do Vídeo | ⏳ Planejada |
 | **06** | Interações Sociais (Likes, Comentários, Inscrições) | ⏳ Planejada |
@@ -208,7 +263,8 @@ Detalhes completos em `docs/project-plan.md`.
 | Camada | Tecnologia |
 |--------|------------|
 | Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS 4, shadcn/ui, React Hook Form + Zod, iron-session, openapi-fetch |
-| Backend | NestJS 11, TypeScript, TypeORM, JWT, Argon2, Mailer (Handlebars) |
+| Backend | NestJS 11, TypeScript, TypeORM, JWT, Argon2, Mailer (Handlebars), AWS SDK v3 (S3), pg-boss |
+| Armazenamento / mídia | MinIO (S3-compatível), FFmpeg/ffprobe (worker) |
 | Banco de Dados | PostgreSQL 17 |
 | E-mail (dev) | Mailpit |
 | Containerização | Docker, Docker Compose |

@@ -2,7 +2,9 @@
 
 ## Environment Startup Verification
 
-**Default behavior:** starting the environment means starting **only infrastructure services** (database, mail, etc.) — **never** start the NestJS application server unless the user explicitly asks to run/serve the project (e.g., "rode o projeto", "suba o servidor", "run the app").
+**First run on a machine:** `../scripts/setup.sh` (or `..\scripts\setup.ps1`) from the repository root. It generates the per-service credential files in `../.local/secrets/`, provisions MinIO, installs, builds, migrates and starts the whole stack (phase-03-videos/TD-15, TD-16). Re-running it is safe.
+
+**Default behavior for the agent:** starting the environment means starting **only infrastructure services** — `docker compose up -d db mailpit minio` — **never** the API or the worker unless the user explicitly asks to run the project. (`docker compose up -d` without service names now starts the compiled API and the worker too.)
 
 After starting infrastructure, always confirm the containers are up before proceeding:
 
@@ -13,68 +15,69 @@ docker compose ps   # all services must show status "running"
 Then verify each infrastructure service is actually ready to accept connections — not just running:
 
 - **PostgreSQL:** `docker compose exec db pg_isready -U streamtube` — expect `accepting connections`
+- **MinIO (object storage):** `docker compose exec minio curl -fsS http://localhost:9000/minio/health/ready` — expect exit code 0 (the service also reports `healthy` in `docker compose ps`).
 
-Only start the NestJS dev server (`npm run start:dev`) when the user **explicitly** asks to run the application — never as part of "start the environment".
+`compose.yaml` requires the generated files `../.local/secrets/{minio,api,worker}.env`: without them Compose refuses to start (run the setup script). **Never run a plain `docker compose config`** — it prints the `env_file` values; use `docker compose config --quiet` or `--no-env-resolution`.
 
 ## Development Environment
 
-This project runs inside Docker. Always use the container for development:
+This project runs inside Docker. Always use the containers for development:
 
 ```bash
-# Start containers
-docker compose up -d
+../scripts/setup.sh                          # first time (and whenever in doubt): idempotent
+docker compose up -d                         # API (compiled, npm run start:prod) + worker + infrastructure
 
-# Install dependencies (first time only)
-docker compose exec nestjs-api npm install
-
-# Run the dev server (watch mode)
-docker compose exec nestjs-api npm run start:dev
+# Hot reload instead of the compiled API (the dev server needs port 3000):
+docker compose stop nestjs-api
+docker compose run --rm --service-ports nestjs-api npm run start:dev
 ```
 
 Services:
-- `nestjs-api` — NestJS API, port `3000`
+- `nestjs-api` — NestJS API, port `3000`; runs `npm run start:prod` (the setup builds `dist/`)
+- `worker` — video worker (FFmpeg), no published ports; runs `dist/worker/main.worker.js`
 - `db` — PostgreSQL 17, port `5432`, database `streamtube`, user/password `streamtube`
+- `minio` — pinned MinIO built from `docker/minio/Dockerfile` (SHA-256-verified release binary), API port `9000`, console port `9001`, data in the `minio-data` volume
+- `test-api`, `test-worker` (`compose.test.yaml`, profile `test`) — **ephemeral** test containers, only via `run --rm`
+
+Credentials (phase-03-videos/TD-16): one `env_file` per service under `../.local/secrets/` — `minio.env` (root, `minio` only), `api.env` (API + read-only delivery identity), `worker.env` (worker identity), `test-api.env`/`test-worker.env` (restricted test identities, test containers only), `provision.env` (provisioning container), `maintenance.env` (maintenance container). The bind-mounted `.env` holds **no** credential; the API and the worker refuse to start if `MINIO_ROOT_*` or `S3_TEST_MAINTENANCE_*` reach them, and the tests refuse root, production and maintenance credentials. Never copy a credential into `.env`, a fixture, a log or a commit.
+
+Host ports can be moved with `STREAMTUBE_API_PORT`, `STREAMTUBE_DB_PORT`, `STREAMTUBE_MINIO_PORT`, `STREAMTUBE_MINIO_CONSOLE_PORT`, `STREAMTUBE_MAILPIT_SMTP_PORT`, `STREAMTUBE_MAILPIT_UI_PORT` (defaults: the ports above). A second copy on the same machine also needs its own `COMPOSE_PROJECT_NAME`: otherwise Compose derives the project from the folder name (`nestjs-project`) and the copy would reuse the first copy's containers and volumes.
 
 All verification and teardown commands run on the **host machine**:
 
 ```bash
-# Verify NestJS is running (expect 200 + "Hello World!")
-curl http://localhost:3000
-
-# Verify PostgreSQL is ready (runs inside the db container)
+../scripts/verify.sh                         # health, credential isolation, essential suites
+curl http://localhost:3000                   # expect 200 + "Hello World!"
 docker compose exec db pg_isready -U streamtube
-
-# Check container logs
 docker compose logs nestjs-api
-docker compose logs db
-
-# Tear down the entire environment
-docker compose down
+docker compose logs worker
+docker compose down                          # keeps the data volumes
 ```
 
 ## Commands
 
 **Strict rule:** every `npm`, `npx`, `node`, `tsc`, and test command runs **inside the container**, never on the host. Running on the host causes env-var divergence (`DB_HOST` resolves to `localhost` instead of the Compose service), uses a different Node version, and produces results that do not reflect what runs in CI/prod.
 
-### Container-only commands (always prefix with `docker compose exec nestjs-api`)
+### Container-only commands
+
+Build, type-check, lint and **unit** tests run in the API container (`docker compose exec nestjs-api …`). **Integration, e2e and media suites run only in the ephemeral test containers** (phase-03-videos/TD-15): the operational `nestjs-api`/`worker` hold no test identity, so those suites refuse to start there by design.
 
 ```bash
-npm run start:dev                        # Dev server with hot-reload
+# in nestjs-api (docker compose exec nestjs-api …)
 npm run build                            # Compile to dist/
-npm run start:prod                       # Run compiled build
-
-npm run test:unit                        # Unit tests only (no database)
-npm run test:integration                 # Integration tests only (test database)
-npm test                                 # Unit + integration tests
-npm run test:watch                       # Unit + integration tests in watch mode
-npm run test:cov                         # Coverage report (unit + integration)
-npm run test:e2e                         # End-to-end tests (test database)
-npm run test:db:prepare                  # Create/reset/migrate the test database without running tests
-
+npm run test:unit                        # Unit tests only (no database, no storage)
 npx tsc --noEmit                         # Type-check (required before declaring a task done)
 npm run lint                             # ESLint with auto-fix (modifies files)
 npx eslint "{src,apps,libs,test}/**/*.ts" # ESLint check only (no --fix)
 npm run format                           # Prettier formatting
+
+# in the ephemeral test containers (T="docker compose -f compose.yaml -f compose.test.yaml run --rm")
+$T test-api npm test                     # Unit + integration tests
+$T test-api npm run test:integration     # Integration tests only (test database)
+$T test-api npm run test:e2e             # End-to-end tests (test database)
+$T test-api npm run test:cov             # Coverage report (unit + integration)
+$T test-api npm run test:db:prepare      # Create/reset/migrate the test database without running tests
+$T test-worker npm run test:media        # FFmpeg/ffprobe suites (worker image)
 ```
 
 ### Host-only commands (Docker / connectivity probes)
@@ -90,7 +93,7 @@ curl http://localhost:3000
 
 Integration and e2e tests run **only** against the dedicated test database named by `DB_TEST_NAME` (e.g. `streamtube_test`), never against the development database (`DB_NAME=streamtube`). See `README.md` → "Run tests" for the full setup.
 
-- Both `DB_TEST_NAME` (must match `^[a-z][a-z0-9_]*_test$`) and `DB_TEST_SERVER_ID` (the server's `system_identifier`) must be set in the local `.env`. Without them, integration and e2e runs refuse to start. Get the identifier with `docker compose exec db psql -U streamtube -d streamtube -tAc "SELECT system_identifier FROM pg_control_system()"`.
+- Both `DB_TEST_NAME` (must match `^[a-z][a-z0-9_]*_test$`) and `DB_TEST_SERVER_ID` (the server's `system_identifier`) must be set in the local `.env`. The setup script fills `DB_TEST_SERVER_ID` when it is empty. Without them, integration and e2e runs refuse to start. Get the identifier with `docker compose exec db psql -U streamtube -d streamtube -tAc "SELECT system_identifier FROM pg_control_system()"`.
 - The **real value** of `DB_TEST_SERVER_ID` is machine-specific. It must never be included in `.env.example`, test fixtures or any commit; it lives only in the local, git-ignored `.env`. `.env.example` must keep documenting the variable **name with an empty value** (`DB_TEST_SERVER_ID=`). Fixtures use a fictitious identifier.
 - Configuring these variables is a one-time step per developer. The test schema is not persistent: it is recreated on every run (see below).
 - Keep `DB_NAME` pointing at the development database. `readTestDatabaseConfig()` rejects an original `DB_NAME` equal to `DB_TEST_NAME` (or any other `*_test` name) before any connection. `applyTestDatabaseEnv()` keeps the original value in module-private state (not in any environment variable, so it cannot be forged) before rewriting `DB_NAME`. Repeated calls therefore stay idempotent and never treat the rewritten value as the developer's.
@@ -101,14 +104,24 @@ Integration and e2e tests run **only** against the dedicated test database named
 
 ### Test execution
 
-Integration and e2e suites share a single test database, so they **must** run serially. Both Jest configs enforce it with `"maxWorkers": 1` (`package.json` → `jest`, and `test/jest-e2e.json`), so the npm scripts are already serialized:
+Integration and e2e suites share a single test database, so they **must** run serially. Both Jest configs enforce it with `"maxWorkers": 1` (`package.json` → `jest`, and `test/jest-e2e.json`), so the npm scripts are already serialized. They run in the ephemeral test containers, which receive only the restricted test identities (`S3_TEST_API_*`, `S3_TEST_WORKER_*`, `S3_TEST_DELIVERY_*`) and use only `DB_TEST_NAME`, `S3_TEST_BUCKET` and `PGBOSS_TEST_SCHEMA`:
 
 ```bash
-docker compose exec nestjs-api npm test
-docker compose exec nestjs-api npm run test:e2e
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm test
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm run test:e2e
 ```
 
 **Never pass `-w` / `--maxWorkers`** to a run that includes integration or e2e tests. The CLI flag overrides the config, and the guards cannot detect it. Parallel execution causes hook timeouts, FK violations, deadlocks and cross-suite contamination, because suites truncate, seed or reset shared tables concurrently. A separate concurrent Jest process is rejected by an advisory lock on `DB_TEST_NAME`. That lock does not protect against parallel workers inside one run.
+
+**Storage in tests:** suites never create, empty or reset a bucket. Each test isolates its objects under the keys of the videos it creates and asserts only those keys; the test bucket is created by provisioning. Cleanup is the external maintenance container's (`../scripts/test-storage-maintenance.sh`, dry run unless `--confirm`), never automatic, never concurrent with a test run (it takes the same advisory lock).
+
+**Media tests run in the worker image.** The API image is deliberately free of FFmpeg (phase-03-videos/TD-06), so the suites that need the real ffprobe/ffmpeg (`src/media/*.integration-spec.ts`, Verification Gate 6, and `src/worker/video-processing.worker.integration-spec.ts`) only run where the pinned FFmpeg is installed:
+
+```bash
+docker compose -f compose.yaml -f compose.test.yaml run --rm test-worker npm run test:media
+```
+
+In `test-api` the same suites are reported as **skipped**, not passed. `test:media` sets `MEDIA_TOOLS_REQUIRED=1`, so a missing ffprobe fails the run instead of skipping. It runs the `integration` project, so its globalSetup resets the test database like any integration run: never run it concurrently with `npm test` or `npm run test:e2e`. A full regression is `../scripts/verify.sh --full` (`npm test` + `npm run test:e2e` in `test-api`, `npm run test:media` in `test-worker`, `tsc`, eslint). A failing suite keeps its complete output in `../.local/verify-logs/` (git-ignored), redacted: local credential values, presigned-URL signature parameters and bearer tokens are masked.
 
 During active development, run only the tests related to the file being changed (`npm test -- path/to/file.spec.ts`). `--selectProjects` takes several values, so pass paths through `--testPathPatterns` when combining them (`npx jest --selectProjects integration --testPathPatterns src/auth`). Before declaring a task done, run the full suite — see the global `CLAUDE.md` → "Definition of Done (Technical)".
 

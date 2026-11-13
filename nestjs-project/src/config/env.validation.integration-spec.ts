@@ -6,6 +6,10 @@ const requiredEnv = {
   DB_NAME: 'db',
   JWT_SECRET: 'secret',
   JWT_REFRESH_SECRET: 'refresh-secret',
+  S3_ACCESS_KEY_ID: 'access-key',
+  S3_SECRET_ACCESS_KEY: 'secret-key',
+  S3_DELIVERY_ACCESS_KEY_ID: 'delivery-key',
+  S3_DELIVERY_SECRET_ACCESS_KEY: 'delivery-secret',
 };
 
 const validate = (env: Record<string, string>) =>

@@ -238,6 +238,10 @@ _Subprojects in scope:_
 
 **Decision:** A (@nestjs/throttler)
 
+**Revisions:**
+
+- 2026-11-11 — Actual registration scope recorded (phase-03-videos ICC-1): `ThrottlerGuard` is provided as `APP_GUARD` inside `AuthModule`, which NestJS binds globally; the single unnamed policy `{ ttl: 60000, limit: 10 }` therefore applies to every route not marked `@SkipThrottle()` (today only `AppController`), not to `AuthModule` routes only. The authentication limits are unchanged; Phase 03 video controllers opt out explicitly (phase-03-videos/TD-13). Rationale: Opt-out explícito nas rotas de vídeo.
+
 ---
 
 ## TD-09: Refresh Token Format

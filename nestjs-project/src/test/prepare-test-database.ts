@@ -5,6 +5,7 @@ import { VerificationToken } from '../auth/entities/verification-token.entity';
 import { Channel } from '../channels/entities/channel.entity';
 import { User } from '../users/entities/user.entity';
 import { createTestDataSource } from './create-test-data-source';
+import { applyTestQueueEnv, dropTestQueueSchema } from './test-queue';
 import {
   assertAuthorizedServer,
   readTestDatabaseConfig,
@@ -111,6 +112,11 @@ export async function prepareTestDatabase(): Promise<TestRunLock> {
       // would otherwise make every later run fail. clearDatabase drops views,
       // tables and ENUM types but keeps extensions (uuid-ossp).
       await testDataSource.dropDatabase();
+      // The pg-boss migration creates PGBOSS_SCHEMA; point it at the test
+      // queue schema and drop that schema first (clearDatabase only clears
+      // the public schema), so every run starts with an empty queue.
+      applyTestQueueEnv(process.env);
+      await dropTestQueueSchema(testDataSource);
       await testDataSource.runMigrations({ transaction: 'each' });
     } finally {
       await testDataSource.destroy();
