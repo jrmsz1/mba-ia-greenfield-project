@@ -159,14 +159,74 @@ function distinctDeliveryIdentity(
   return env;
 }
 
+/**
+ * JWT signing secrets of the HTTP API. Values that were ever published (the
+ * old `.env.example` placeholders are in the Git history) or that are short or
+ * repetitive are refused at startup, with no fallback. The setup scripts
+ * generate 32 random bytes (64 hex characters) per secret. Error messages
+ * name the variable, never its value.
+ */
+export const JWT_SECRET_MIN_LENGTH = 32;
+const JWT_SECRET_MIN_DISTINCT_CHARS = 8;
+export const PUBLIC_JWT_PLACEHOLDERS: readonly string[] = [
+  'change-me-in-production',
+  'change-me-refresh-in-production',
+];
+const PLACEHOLDER_PATTERN =
+  /change[-_ ]?me|placeholder|your[-_ ]?secret|replace[-_ ]?me/i;
+
+function strongJwtSecret(
+  value: string,
+  helpers: Joi.CustomHelpers,
+): string | Joi.ErrorReport {
+  const reject = (reason: string) =>
+    helpers.error('any.custom', { error: new Error(reason) });
+  if (
+    PUBLIC_JWT_PLACEHOLDERS.includes(value) ||
+    PLACEHOLDER_PATTERN.test(value)
+  ) {
+    return reject(
+      'it is a public placeholder; run the setup script to generate a secret',
+    );
+  }
+  if (value.length < JWT_SECRET_MIN_LENGTH) {
+    return reject(
+      `it must be at least ${JWT_SECRET_MIN_LENGTH} characters long`,
+    );
+  }
+  if (new Set(value).size < JWT_SECRET_MIN_DISTINCT_CHARS) {
+    return reject('it is too repetitive to be a random secret');
+  }
+  return value;
+}
+
+const jwtSecret = () =>
+  Joi.string().required().custom(strongJwtSecret, 'strong JWT secret');
+
+/** Access and refresh tokens are signed with separate keys: they must differ. */
+function distinctJwtSecrets(
+  env: Record<string, string>,
+  helpers: Joi.CustomHelpers,
+): Record<string, string> | Joi.ErrorReport {
+  if (env.JWT_SECRET === env.JWT_REFRESH_SECRET) {
+    return helpers.error('any.custom', {
+      error: new Error('JWT_REFRESH_SECRET must differ from JWT_SECRET'),
+    });
+  }
+  return env;
+}
+
 /** HTTP API process (AppModule). */
 export const envValidationSchema = Joi.object({
   ...baseEnvKeys,
+  JWT_SECRET: jwtSecret(),
+  JWT_REFRESH_SECRET: jwtSecret(),
   S3_DELIVERY_ACCESS_KEY_ID: Joi.string().required(),
   S3_DELIVERY_SECRET_ACCESS_KEY: Joi.string().required(),
 })
   .custom(crossKeyRules, 'phase 03 cross-key rules')
-  .custom(distinctDeliveryIdentity, 'separate delivery identity');
+  .custom(distinctDeliveryIdentity, 'separate delivery identity')
+  .custom(distinctJwtSecrets, 'separate JWT secrets');
 
 /**
  * Video worker process (WorkerModule): it signs no client URL, so it must not

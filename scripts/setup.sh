@@ -176,6 +176,48 @@ else
   ok "nestjs-project/.env holds no credential"
 fi
 
+# ---------------------------------------------------------------- 4b. JWT secrets in .env
+# Same rule as the API (src/config/env.validation.ts), which refuses to start
+# otherwise: present, not a public placeholder, >= 32 characters, >= 8 distinct
+# characters, access != refresh. Only a secret that fails is regenerated (32
+# random bytes); valid secrets are kept. Values are never printed.
+jwt_secret_ok() {
+  local v="$1" distinct
+  [ "${#v}" -ge 32 ] || return 1
+  if printf '%s' "$v" | grep -qiE 'change[-_ ]?me|placeholder|your[-_ ]?secret|replace[-_ ]?me'; then return 1; fi
+  distinct="$(printf '%s' "$v" | fold -w1 | LC_ALL=C sort -u | wc -l)"
+  [ "$((distinct))" -ge 8 ]
+}
+JWT_ACCESS="$(get JWT_SECRET "$ENV_FILE")"
+JWT_REFRESH="$(get JWT_REFRESH_SECRET "$ENV_FILE")"
+NEW_ACCESS=0; NEW_REFRESH=0
+jwt_secret_ok "$JWT_ACCESS" || NEW_ACCESS=1
+jwt_secret_ok "$JWT_REFRESH" || NEW_REFRESH=1
+if [ "$NEW_ACCESS" -eq 0 ] && [ "$NEW_REFRESH" -eq 0 ] && [ "$JWT_ACCESS" = "$JWT_REFRESH" ]; then NEW_REFRESH=1; fi
+unset JWT_ACCESS JWT_REFRESH
+if [ "$NEW_ACCESS" -eq 0 ] && [ "$NEW_REFRESH" -eq 0 ]; then
+  ok "JWT secrets: kept (strong and distinct)"
+elif [ "$MODE" = "prepare" ]; then
+  warn "JWT secrets in .env are missing, public placeholders, weak or identical; the API refuses them and the full setup replaces them (prepare-only changes nothing)"
+else
+  backup="$SECRETS/jwt-env-$(date +%Y%m%d%H%M%S).bak"
+  grep -E '^JWT_(SECRET|REFRESH_SECRET)=' "$ENV_FILE" > "$backup" || true
+  chmod 600 "$backup" 2>/dev/null || true
+  awk -v na="$NEW_ACCESS" -v nr="$NEW_REFRESH" -v jwt="$(rand_hex 32)" -v refresh="$(rand_hex 32)" '
+    /^JWT_SECRET=/ { seen_a = 1; if (na == 1) { print "JWT_SECRET=" jwt; next } }
+    /^JWT_REFRESH_SECRET=/ { seen_r = 1; if (nr == 1) { print "JWT_REFRESH_SECRET=" refresh; next } }
+    { print }
+    END {
+      if (!seen_a) print "JWT_SECRET=" jwt
+      if (!seen_r) print "JWT_REFRESH_SECRET=" refresh
+    }' "$ENV_FILE" > "$ENV_FILE.tmp"
+  mv "$ENV_FILE.tmp" "$ENV_FILE"
+  replaced=""
+  if [ "$NEW_ACCESS" -eq 1 ]; then replaced="JWT_SECRET"; fi
+  if [ "$NEW_REFRESH" -eq 1 ]; then replaced="${replaced:+$replaced }JWT_REFRESH_SECRET"; fi
+  ok "JWT secrets: generated $replaced (the previous value was missing, public, weak or identical); tokens signed before stop working; previous lines kept in .local/secrets/ (owner-only)"
+fi
+
 # ---------------------------------------------------------------- 5. configuration check
 step "Validating the Compose configuration (values are never printed)"
 compose config --quiet || die "compose.yaml is not valid"

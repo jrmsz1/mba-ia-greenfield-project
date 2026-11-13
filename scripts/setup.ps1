@@ -200,6 +200,44 @@ if ($legacyKeys.Count -gt 0) {
   Ok 'nestjs-project/.env holds no credential'
 }
 
+# ---------------------------------------------------------------- 4b. JWT secrets in .env
+# Same rule as the API (src/config/env.validation.ts), which refuses to start
+# otherwise: present, not a public placeholder, >= 32 characters, >= 8 distinct
+# characters, access != refresh. Only a secret that fails is regenerated (32
+# random bytes); valid secrets are kept. Values are never printed.
+function Test-JwtSecret([string]$v) {
+  if ($v.Length -lt 32) { return $false }
+  if ($v -match '(?i)change[-_ ]?me|placeholder|your[-_ ]?secret|replace[-_ ]?me') { return $false }
+  return ((@($v.ToCharArray() | Select-Object -Unique)).Count -ge 8)
+}
+$jwtAccess = Get-EnvValue 'JWT_SECRET' $EnvFile
+$jwtRefresh = Get-EnvValue 'JWT_REFRESH_SECRET' $EnvFile
+$newAccess = -not (Test-JwtSecret $jwtAccess)
+$newRefresh = -not (Test-JwtSecret $jwtRefresh)
+if (-not $newAccess -and -not $newRefresh -and ($jwtAccess -ceq $jwtRefresh)) { $newRefresh = $true }
+$jwtAccess = $null; $jwtRefresh = $null
+if (-not $newAccess -and -not $newRefresh) {
+  Ok 'JWT secrets: kept (strong and distinct)'
+} elseif ($PrepareOnly) {
+  Warn 'JWT secrets in .env are missing, public placeholders, weak or identical; the API refuses them and the full setup replaces them (prepare-only changes nothing)'
+} else {
+  $all = [IO.File]::ReadAllLines($EnvFile)
+  $backup = Join-Path $Secrets ("jwt-env-{0}.bak" -f (Get-Date -Format 'yyyyMMddHHmmss'))
+  Write-TextFile $backup @($all | Where-Object { $_ -match '^JWT_(SECRET|REFRESH_SECRET)=' })
+  Restrict-ToOwner $backup
+  $seenAccess = $false; $seenRefresh = $false
+  $updated = foreach ($line in $all) {
+    if ($line.StartsWith('JWT_SECRET=')) { $seenAccess = $true; if ($newAccess) { "JWT_SECRET=$(RandHex 32)" } else { $line } }
+    elseif ($line.StartsWith('JWT_REFRESH_SECRET=')) { $seenRefresh = $true; if ($newRefresh) { "JWT_REFRESH_SECRET=$(RandHex 32)" } else { $line } }
+    else { $line }
+  }
+  if (-not $seenAccess) { $updated = @($updated) + "JWT_SECRET=$(RandHex 32)" }
+  if (-not $seenRefresh) { $updated = @($updated) + "JWT_REFRESH_SECRET=$(RandHex 32)" }
+  Write-TextFile $EnvFile $updated
+  $replaced = (@($(if ($newAccess) { 'JWT_SECRET' }), $(if ($newRefresh) { 'JWT_REFRESH_SECRET' })) | Where-Object { $_ }) -join ' '
+  Ok "JWT secrets: generated $replaced (the previous value was missing, public, weak or identical); tokens signed before stop working; previous lines kept in .local\secrets\ (owner-only)"
+}
+
 # ---------------------------------------------------------------- 5. configuration check
 Step 'Validating the Compose configuration (values are never printed)'
 Compose config --quiet

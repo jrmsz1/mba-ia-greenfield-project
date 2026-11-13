@@ -71,7 +71,7 @@ Um comando prepara e sobe tudo; outro verifica. Não é preciso configurar vari�
 O setup (seguro para reexecutar; nunca apaga dados nem sobrescreve credenciais existentes):
 
 1. confere Docker, Docker Compose e espaço em disco;
-2. cria `nestjs-project/.env` a partir do `.env.example` (somente configurações não sensíveis);
+2. cria `nestjs-project/.env` a partir do `.env.example`, com dois segredos JWT aleatórios (32 bytes cada); num `.env` existente, mantém os segredos válidos e substitui os ausentes, públicos (placeholders antigos), fracos ou iguais entre si, guardando as linhas anteriores em `.local/secrets/` — a API se recusa a iniciar com segredos assim;
 3. gera as credenciais em `.local/secrets/` — diretório dentro do checkout, **ignorado pelo Git e fora dos volumes montados**, com permissão só do dono; os valores nunca são impressos;
 4. sobe PostgreSQL, Mailpit e MinIO e provisiona o MinIO (buckets, políticas e identidades de menor privilégio) de forma idempotente;
 5. instala as dependências, compila e aplica as migrations pendentes;

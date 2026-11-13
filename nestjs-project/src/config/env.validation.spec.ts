@@ -1,15 +1,20 @@
 import {
   envValidationSchema,
+  PUBLIC_JWT_PLACEHOLDERS,
   workerEnvValidationSchema,
 } from './env.validation';
 import { VIDEO_ENV_DEFAULTS } from './video.constants';
+
+// Fictitious values with the shape the setup scripts generate.
+const ACCESS_SECRET = 'fixture-access-jwt-0123456789abcdefghijklmnopqrstuv';
+const REFRESH_SECRET = 'fixture-refresh-jwt-0123456789abcdefghijklmnopqrstu';
 
 const requiredEnv = {
   DB_USERNAME: 'user',
   DB_PASSWORD: 'pass',
   DB_NAME: 'db',
-  JWT_SECRET: 'secret',
-  JWT_REFRESH_SECRET: 'refresh-secret',
+  JWT_SECRET: ACCESS_SECRET,
+  JWT_REFRESH_SECRET: REFRESH_SECRET,
   S3_ACCESS_KEY_ID: 'access-key',
   S3_SECRET_ACCESS_KEY: 'secret-key',
   S3_DELIVERY_ACCESS_KEY_ID: 'delivery-key',
@@ -181,5 +186,105 @@ describe('envValidationSchema — phase 03 keys', () => {
     const { error } = validate({ PGBOSS_TEST_SCHEMA: 'pgboss' });
 
     expect(error?.message).toContain('PGBOSS_TEST_SCHEMA');
+  });
+});
+
+describe('envValidationSchema — JWT secrets (fail closed)', () => {
+  it('should accept two distinct secrets with the generated shape (64 hex characters)', () => {
+    const { error } = validate({
+      JWT_SECRET: 'a3f1'.repeat(4) + '0b9c7d2e5f6a8b1c'.repeat(3),
+      JWT_REFRESH_SECRET: '7e2d'.repeat(4) + 'c4b5a69788f1e0d3'.repeat(3),
+    });
+
+    expect(error).toBeUndefined();
+  });
+
+  it.each(['JWT_SECRET', 'JWT_REFRESH_SECRET'])(
+    'should refuse a missing %s',
+    (key) => {
+      const env: Record<string, string> = { ...requiredEnv };
+      delete env[key];
+
+      const { error } = envValidationSchema.validate(env, {
+        allowUnknown: true,
+      });
+
+      expect(error?.message).toContain(key);
+    },
+  );
+
+  it.each(['JWT_SECRET', 'JWT_REFRESH_SECRET'])(
+    'should refuse an empty %s',
+    (key) => {
+      expect(validate({ [key]: '' }).error?.message).toContain(key);
+    },
+  );
+
+  it.each(
+    PUBLIC_JWT_PLACEHOLDERS.flatMap((placeholder) => [
+      ['JWT_SECRET', placeholder],
+      ['JWT_REFRESH_SECRET', placeholder],
+    ]),
+  )('should refuse %s set to the public placeholder %s', (key, value) => {
+    const { error } = validate({ [key]: value });
+
+    expect(error?.message).toContain(key);
+    expect(error?.message).toContain('public placeholder');
+  });
+
+  it('should refuse a long value that still reads as a placeholder', () => {
+    const { error } = validate({
+      JWT_SECRET: 'please-change-me-before-going-live-0123456789',
+    });
+
+    expect(error?.message).toContain('public placeholder');
+  });
+
+  it('should refuse a secret shorter than 32 characters', () => {
+    const { error } = validate({ JWT_SECRET: 'Xk29fQ0pL7mZ3vB8nC1d' });
+
+    expect(error?.message).toContain('JWT_SECRET');
+    expect(error?.message).toContain('at least 32 characters');
+  });
+
+  it('should refuse a long but repetitive secret', () => {
+    const { error } = validate({ JWT_REFRESH_SECRET: 'ab'.repeat(32) });
+
+    expect(error?.message).toContain('JWT_REFRESH_SECRET');
+    expect(error?.message).toContain('too repetitive');
+  });
+
+  it('should refuse the same value for the access and the refresh secret', () => {
+    const { error } = validate({ JWT_REFRESH_SECRET: ACCESS_SECRET });
+
+    expect(error?.message).toContain(
+      'JWT_REFRESH_SECRET must differ from JWT_SECRET',
+    );
+  });
+
+  it('should never echo a rejected value in the error message', () => {
+    const shortSecret = 'Xk29fQ0pL7mZ3vB8nC1d';
+    const { error } = validate({
+      JWT_SECRET: shortSecret,
+      JWT_REFRESH_SECRET: 'ab'.repeat(32),
+    });
+
+    expect(error).toBeDefined();
+    expect(error?.message).not.toContain(shortSecret);
+    expect(error?.message).not.toContain('ab'.repeat(32));
+  });
+
+  it('should leave the worker schema unchanged (the worker signs no token)', () => {
+    const { error } = workerEnvValidationSchema.validate(
+      {
+        ...requiredEnv,
+        JWT_SECRET: 'change-me-in-production',
+        S3_DELIVERY_ACCESS_KEY_ID: undefined,
+        S3_DELIVERY_SECRET_ACCESS_KEY: undefined,
+      },
+      { allowUnknown: true },
+    );
+
+    expect(error).toBeUndefined();
   });
 });
