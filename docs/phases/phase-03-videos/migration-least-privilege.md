@@ -66,7 +66,27 @@ Prepared at CP1 (read-only for the running stack): `./scripts/setup.sh --prepare
 5. **No cleanup:** the 47 abandoned sessions and every object are preserved; the maintenance wrapper is not run.
 6. **Regression and gates (CP2 evidence):** `./scripts/verify.sh --full`, the permission matrix, then re-validation of Gates 2, 4, 5, 6, 7, 8 and the reconciler suite with new evidence; `progress.md` only with what was executed.
 
-**Recovery (no silent root fallback):** if step 1–3 fails, (a) restore `nestjs-project/.env` from the owner-only backup in `.local/secrets/` and the previous `compose.yaml` from Git (`git checkout <commit before CP1> -- nestjs-project/compose.yaml`), then `docker compose up -d --force-recreate nestjs-api` — an explicit, visible rollback to the pre-migration configuration; (b) the provisioned users/policies are additive and may stay (nothing to undo); (c) the code has no fallback: the API/worker refuse to start without their own identity and refuse `MINIO_ROOT_*`, so a half-applied state fails closed instead of silently using root. No step writes or deletes objects or databases.
+**Pre-migration backup (step 0, mandatory):** copy `nestjs-project/.env` and the whole `.local/secrets/` to `.local/pre-cp2/` (git-ignored, outside the bind mount, owner-only). Restoring only `.env`/`compose.yaml` is **not** enough: the current code refuses `MINIO_ROOT_*` and requires the delivery identity, so a restore must bring back a *compatible set* of code, Compose and configuration, or roll forward.
+
+**Recovery A — preferred, roll-forward (the provisioned restricted identities stay):** the code fails closed (no root fallback), so a failure shows up as `nestjs-api`/`worker` not starting (e.g. `BucketUnavailableError`). Fix the cause and re-run the idempotent setup:
+
+1. `rm -rf .local/secrets && cp -r .local/pre-cp2/secrets .local/secrets` (only when the credential files were damaged; the setup never overwrites them silently and reports any file that disagrees with `provision.env`);
+2. `./scripts/setup.sh` (or `.\scripts\setup.ps1`) — keeps the existing identities and buckets, recreates only `nestjs-api` and `worker`;
+3. `./scripts/verify.sh` must report `RESULT: PASS`.
+
+**Recovery B — alternative restore of a compatible previous version (no data or volume change):** the previous code at `c5adff0` (no migration or dependency changed since — `git diff c5adff0 HEAD` on migrations, `package.json` and the lockfile is empty) with its own `compose.yaml` and the pre-migration `.env`:
+
+1. `git switch --detach c5adff0` (working tree = previous code + previous `compose.yaml`; `.local/` is untouched);
+2. `cp .local/pre-cp2/.env nestjs-project/.env`;
+3. `cd nestjs-project && docker compose up -d --force-recreate nestjs-api worker` — the dry run shows only these two are recreated (`db`, `minio`, `mailpit` keep running: same configuration);
+4. `docker compose exec nestjs-api npm run build`, then start the API the previous way (`docker compose exec -d nestjs-api node dist/main` or `npm run start:dev`) and `docker compose up -d --force-recreate worker`;
+5. check: `curl http://localhost:3000` answers, the worker logs `Video worker started`, the API authenticates to storage;
+6. **do not run the previous version's integration suites** in this state: the old harness empties the test bucket and aborts every multipart session, which would destroy the 47 preserved uploads;
+7. to return: `git switch feature/phase-03-videos` and Recovery A.
+
+The provisioned users and policies are additive and can stay in either case; nothing is deleted. No step writes or deletes objects, buckets, volumes or databases.
+
+**Rehearsal (2026-11-12, isolated replica `streamtube-rb`, other ports):** replica of the main environment at `c5adff0` (root pair in `.env`, bucket created by the old startup), seeded with a sentinel object, 3 abandoned multipart uploads and a sentinel database; migration to `58e0899` with provisioning twice (14 created, then 0); **simulated failure** — the API identity secret no longer matched MinIO → the recreated API failed closed (`BucketUnavailableError`), the worker kept running, data intact; **Recovery A** → API and worker up, `verify.sh` 13/13 PASS; second simulated failure → **Recovery B** (code + Compose at `c5adff0`, `.env` from the backup; dry run: only `nestjs-api` and `worker` recreated) → API answering, worker started, the restored API authenticates to storage (HeadBucket OK). In every state the operational bucket, the sentinel object and the sentinel database were identical to the baseline and **0 of the 3 pre-existing abandoned sessions were missing**; the only difference was the `streamtube_test` database created by the rehearsal's own verification.
 
 ## 5. Expected configuration differences (not applied)
 
