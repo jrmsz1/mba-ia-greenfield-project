@@ -1,8 +1,8 @@
 # Phase 03 — MBA audit matrix (CP4)
 
-**Date:** 2026-11-12 · **Branch:** `feature/phase-03-videos` (from `dev`, not merged; nothing committed to `main`) · **HEAD audited:** `c1d7416` plus the CP4 docs commit.
+**Date:** 2026-11-12 (CP4), updated 2026-11-13 (CP5) · **Branch:** `feature/phase-03-videos` (from `dev`, not merged; nothing committed to `main`) · **HEAD audited:** `c1d7416` plus the CP4 docs commit; CP5 re-audited `f809631` on a clean clone (`evaluator-simulation.md`).
 
-_Criteria source: `docs/project-plan.md` → Phase 03 (capabilities, deliverables, attention points), the root `CLAUDE.md` (Definition of Done, Git Flow, working principles) and the plan pipeline artifacts. The official MBA brief, with its automatic-fail list, is **not** in the repository. The automatic-fail column below lists the usual causes checked explicitly; it is not the official list. A criterion is PASS only with executed or committed evidence._
+_Criteria source: `docs/project-plan.md` → Phase 03 (capabilities, deliverables, attention points), the root `CLAUDE.md` (Definition of Done, Git Flow, working principles) and the plan pipeline artifacts. The official MBA brief is not in the repository; its automatic-fail criteria, as provided by the user, are checked one by one in §7. A criterion is PASS only with executed or committed evidence._
 
 ## 1. Definition of Done (executed 2026-11-12, CP4)
 
@@ -41,18 +41,18 @@ No test was skipped beyond the FFmpeg suites, which the API image cannot run by 
 | 13 | Upload completion consistency | Completion proof, ambiguous completion and concurrency (TD-02, TD-09) | Gates 4–5 `gate-04-05-completion.md` | PASS |
 | 14 | Storage growth / orphan resources | Reconciler for expired and stale uploads, quota per owner (TD-13, TD-14); test-bucket cleanup is an explicit guarded tool | `video-reconciler.worker.integration-spec.ts`; Gate 3 criterion 7 | PASS |
 | 15 | Compose with storage, queue and worker | `nestjs-project/compose.yaml` (`nestjs-api`, `worker`, `minio`, `db`, `mailpit`) + `compose.test.yaml` (ephemeral `test-api`, `test-worker`) | `config --quiet` valid; verify.sh health checks | PASS |
-| 16 | Simple evaluator execution | `scripts/setup.sh`/`.ps1` (one command), `scripts/verify.sh`/`.ps1` (quick and `--full`) | CP2 rehearsal and migration; this CP4 run | PASS on Windows + Git Bash; **native Linux/macOS not executed** (see §3) |
-| 17 | Green tests at every level | Unit, integration, e2e, media | §1 | PASS |
-| 18 | Definition of Done (root `CLAUDE.md`) | — | §1 | PASS |
+| 16 | Simple evaluator execution | `scripts/setup.sh`/`.ps1` (one command), `scripts/verify.sh`/`.ps1` (quick and `--full`) | CP5 clean clone (`evaluator-simulation.md`): `setup.sh` complete in 102 s with no manual step (run 3, at `f809631`); `verify.sh` 13/13; video flow 12/12 twice. Runs 1–2 failed first: a build defect (fixed, `f809631`) and a host-wide I/O slowdown that outlasted the 2-minute health window | PASS on Windows (Git Bash; PowerShell prepare-only + full verify); **native Linux/macOS not executed** |
+| 17 | Green tests at every level | Unit, integration, e2e, media | §1; CP5 clean clone: `npm test` 596/0 failed, `test:e2e` 92/92, `test:media` 113/113. One earlier clone run had 4 AuthService integration failures that did not reproduce twice (cause indeterminate, `evaluator-simulation.md` §3) | PASS (intermittent failure recorded) |
+| 18 | Definition of Done (root `CLAUDE.md`) | — | §1 (main environment, CP4); the same commands on the clean clone at `f809631` (CP5) | PASS |
 | 19 | Plan pipeline artifacts | `context.md`, `validation.md` (`status: clean`), `phase-03-videos.md` with Data Model, API Contracts, Authorization Matrix, Error Catalog, Events/Messages, Dependency Map, Deliverables; 16 TDs in `docs/decisions/technical-decisions-phase-03-videos.md` | files present | PASS |
 | 20 | Step Implementations and progress | 17/17 SIs completed | `progress.md` | PASS |
-| 21 | Verification gates 1–8 | — | `progress.md` gates table: Gates 1, 3, 4, 5, 6, 7, 8 approved by the user; Gate 2 recorded as "PASS — evidence executed" with no explicit approval line (re-validated in CP2, which the user approved) | PASS (Gate 2: approval wording to confirm) |
-| 22 | CLAUDE.md / README / `.env.example` consistent | Fixed in CP4 (§5) | this commit | PASS |
+| 21 | Verification gates 1–8 | — | `progress.md` gates table: all 8 approved by the user (Gate 2 formally on 2026-11-13, covering its evidence and the CP2 re-validation) | PASS |
+| 22 | CLAUDE.md / README / `.env.example` consistent | Fixed in CP4 (§5) and CP5 (§8) | CP4 and CP5 commits | PASS |
 | 23 | Git Flow | Feature branch from `dev` (`dev` is an ancestor, 45 commits ahead, 0 behind); no commit to `main`; no push/merge/rebase | `git merge-base --is-ancestor dev HEAD` | PASS |
 | 24 | Secrets outside Git | `.local/` git-ignored, owner-only; `.env.example` with no credential values; `DB_TEST_SERVER_ID=` empty | verify.sh "no secret file tracked by Git" | PASS |
 | 25 | Frontend for Phase 03 | Not in the Phase 03 scope (TD-15 "no frontend"; screens arrive in Phases 04–05) | `project-plan.md` Phase 03; TD-15 | N/A |
 
-**Summary:** PASS 24 · PENDING 0 · FAIL 0 · N/A 1. Two items carry a recorded caveat: #16 (native Linux/macOS not run) and #21 (Gate 2 approval wording).
+**Summary (after CP5):** PASS 24 · PENDING 0 · FAIL 0 · N/A 1 — unchanged, each still justified by the CP5 evidence. Recorded caveats: #16 (native Linux/macOS not run; on this host the setup failed twice before passing, causes in `evaluator-simulation.md` §4) and #17 (one intermittent AuthService integration failure, cause indeterminate).
 
 ## 3. Possible automatic-fail causes (checked)
 
@@ -84,3 +84,26 @@ Synthetic but valid MP4 (generated test pattern + sine tone, padded with an ISO 
 ## 6. Preserved (not touched by CP4)
 
 The 10 GiB object and its thumbnail in `streamtube-videos-test`; the `streamtube-gate3-media` volume; the historical (47) and later multipart sessions; the development database; `streamtube_backup_verify`; the backup dump. No cleanup was run.
+
+## 7. Automatic-fail criteria (as provided by the user)
+
+| Criterion | Evidence | Result |
+|---|---|---|
+| Workflow research → planning → implementation | commits in ancestry order (verified with `git merge-base --is-ancestor`): `da85c48` decisions (research, 16 TDs) → `a8fe933`/`52cd49a` context + clean validation → `84aef92` plan → `bc63506` test specs → `4fc0aec` first implementation (SI-03.1) | PASS |
+| Plan with SIs and Technical Specifications; `validation.md` clean | `phase-03-videos.md`: 17 SIs, `## Technical Specifications` with Data Model, API Contracts, Authorization Matrix, Error Catalog, Events/Messages, plus Dependency Map and Deliverables; `validation.md` frontmatter `status: clean` | PASS |
+| 10 GB upload without the whole file going through the API | Gate 3: 10 737 418 240 B, every part `PUT` to presigned MinIO URLs, API RSS variation 21 MiB; CP5: the part went to `localhost:9300` (MinIO), the API only issued URLs | PASS |
+| Real queue, worker and object storage in Compose | `compose.yaml`: `worker`, `minio` (pinned image), pg-boss on `db`; CP5 clean clone: job row in `pgboss.job` (0 → 1), worker processed to `ready`, thumbnail object in MinIO | PASS |
+| Tests, tsc and lint green | CP4 main environment: 596 + 92 + 113, tsc 0, eslint 0 errors; CP5 clean clone: the same counts, `tsc` 0, eslint 0 errors (1 known warning) — one intermittent run with 4 AuthService failures, not reproduced twice (§2 #17) | PASS (caveat recorded) |
+| No direct commit on `main` | `main` at `8459b2f`; none of the branch's commits is on `main`; branch from `dev` (`dev` is an ancestor); no push, merge or rebase | PASS |
+| `CLAUDE.md` consistent | root `CLAUDE.md` (CP4: frontend, queue), `nestjs-project/CLAUDE.md` (CP5: second copy needs its own `COMPOSE_PROJECT_NAME`); commands, ports, credentials and test procedure match what the clean clone executed | PASS |
+| AI foundation preserved (Claude Code) | `.claude/` (6 agents, 17 rules, the plan-pipeline/implement/decide/testing-guide skills, settings), `skills-lock.json`, `CLAUDE.md` at root, `nestjs-project/` and `next-frontend/`, `.mcp.json` (+ example) — all present in the clean clone; `git diff dev..HEAD -- .claude skills-lock.json` is empty (only the documented `CLAUDE.md` fixes changed) | PASS |
+
+## 8. CP5 findings and fixes
+
+| Finding | Action |
+|---|---|
+| Fresh build emitted `dist/src/main.js` (Gate 3 script inside the build) — API and worker could not start on a clean clone | fixed in `f809631` (`scripts` excluded from `tsconfig.build.json`); verified by the clean-clone setup and the full suites |
+| A second copy needs its own `COMPOSE_PROJECT_NAME`, not only other ports | documented in `README.md` and `nestjs-project/CLAUDE.md` |
+| The README did not link the 10 GiB report or show its optional command | README "Verificação opcional de 10 GiB" |
+| The provisioning image tag `streamtube-storage-provision:local` is shared between copies | recorded (`evaluator-simulation.md` §6); no change — the setup rebuilds it on every run |
+| `verify.ps1`/`verify.sh` keep only the last lines of a failing suite, so a first error can be lost | recorded as a limitation; not changed in CP5 |

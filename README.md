@@ -98,7 +98,7 @@ Credenciais (uma identidade por processo; o root do MinIO só existe no MinIO e 
 | `provision.env` | contêiner de provisionamento sob demanda |
 | `maintenance.env` | contêiner de manutenção do bucket de testes (`scripts/test-storage-maintenance.*`, nunca automático) |
 
-Portas alternativas (para não conflitar com outra cópia): `STREAMTUBE_API_PORT`, `STREAMTUBE_DB_PORT`, `STREAMTUBE_MINIO_PORT`, `STREAMTUBE_MINIO_CONSOLE_PORT`, `STREAMTUBE_MAILPIT_SMTP_PORT`, `STREAMTUBE_MAILPIT_UI_PORT`.
+Portas alternativas (para não conflitar com outra cópia): `STREAMTUBE_API_PORT`, `STREAMTUBE_DB_PORT`, `STREAMTUBE_MINIO_PORT`, `STREAMTUBE_MINIO_CONSOLE_PORT`, `STREAMTUBE_MAILPIT_SMTP_PORT`, `STREAMTUBE_MAILPIT_UI_PORT`. Para uma segunda cópia na mesma máquina, defina também `COMPOSE_PROJECT_NAME` (ex.: `export COMPOSE_PROJECT_NAME=streamtube-copia` ou `$env:COMPOSE_PROJECT_NAME='streamtube-copia'`) antes do setup e do verify: sem ele, o Compose usa o nome da pasta (`nestjs-project`) e a cópia passaria a usar os contêineres e volumes da primeira.
 
 ### 2. Frontend (Next.js)
 
@@ -131,6 +131,15 @@ docker compose -f compose.yaml -f compose.test.yaml run --rm test-worker npm run
 ```
 
 Sufixos: `*.spec.ts` (unitário), `*.integration-spec.ts` (integração com banco real), `*.e2e-spec.ts` (end-to-end). Testes de integração/e2e rodam em série. A verificação de upload de 10 GiB é separada e nunca roda nesses comandos.
+
+**Verificação opcional de 10 GiB (Gate 3).** Não faz parte do Quick Start. O resultado aprovado (arquivo de exatamente 10 737 418 240 B, upload multipart direto ao MinIO com interrupção e retomada, processamento, Range e download, 16/16 critérios) está em [`docs/phases/phase-03-videos/verification-10gib.md`](docs/phases/phase-03-videos/verification-10gib.md). Para reproduzir (precisa de ~30 GB livres; usa apenas o banco, o bucket e a fila de testes):
+
+```bash
+cd nestjs-project
+docker volume create streamtube-gate3-media
+docker run --rm -v streamtube-gate3-media:/gate3 alpine chown 10001:10001 /gate3
+docker compose -f compose.yaml -f compose.test.yaml run --rm -v streamtube-gate3-media:/gate3 test-worker npm run verify:large-upload
+```
 
 ### Frontend (Vitest + Playwright)
 

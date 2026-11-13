@@ -41,7 +41,7 @@ Services:
 
 Credentials (phase-03-videos/TD-16): one `env_file` per service under `../.local/secrets/` — `minio.env` (root, `minio` only), `api.env` (API + read-only delivery identity), `worker.env` (worker identity), `test-api.env`/`test-worker.env` (restricted test identities, test containers only), `provision.env` (provisioning container), `maintenance.env` (maintenance container). The bind-mounted `.env` holds **no** credential; the API and the worker refuse to start if `MINIO_ROOT_*` or `S3_TEST_MAINTENANCE_*` reach them, and the tests refuse root, production and maintenance credentials. Never copy a credential into `.env`, a fixture, a log or a commit.
 
-Host ports can be moved with `STREAMTUBE_API_PORT`, `STREAMTUBE_DB_PORT`, `STREAMTUBE_MINIO_PORT`, `STREAMTUBE_MINIO_CONSOLE_PORT`, `STREAMTUBE_MAILPIT_SMTP_PORT`, `STREAMTUBE_MAILPIT_UI_PORT` (defaults: the ports above).
+Host ports can be moved with `STREAMTUBE_API_PORT`, `STREAMTUBE_DB_PORT`, `STREAMTUBE_MINIO_PORT`, `STREAMTUBE_MINIO_CONSOLE_PORT`, `STREAMTUBE_MAILPIT_SMTP_PORT`, `STREAMTUBE_MAILPIT_UI_PORT` (defaults: the ports above). A second copy on the same machine also needs its own `COMPOSE_PROJECT_NAME`: otherwise Compose derives the project from the folder name (`nestjs-project`) and the copy would reuse the first copy's containers and volumes.
 
 All verification and teardown commands run on the **host machine**:
 
