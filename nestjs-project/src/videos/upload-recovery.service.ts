@@ -1,0 +1,317 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
+import type { DataSource } from 'typeorm';
+import { JobPublisherService } from '../queue/job-publisher.service';
+import { StorageError, UploadNotFoundError } from '../storage/storage-errors';
+import { originalKey } from '../storage/storage-key';
+import {
+  StorageService,
+  type ManifestPart,
+  type ObjectHead,
+} from '../storage/storage.service';
+import {
+  contradictionOf,
+  evaluateCompletionProof,
+  type Contradiction,
+} from './completion-proof';
+import { Video } from './entities/video.entity';
+import { FAILURE_REASONS, type VideoProcessingStatus } from './video.constants';
+import { firstRows } from './windowed-counter';
+
+export type RecoveryOutcome =
+  | 'uploaded'
+  | 'failed'
+  | 'expired'
+  | 'released'
+  | 'pending';
+
+export interface ResolveOptions {
+  /** Server-verified manifest, when the caller has one. */
+  manifest?: ManifestPart[];
+  /**
+   * Allow `completing → uploading` when the upload is still open and no object
+   * exists (phase-03-videos/TD-02 step 7). Set by the retried complete — which
+   * re-runs the protocol right away — and by the reconciler for stale claims.
+   */
+  allowRelease?: boolean;
+}
+
+/**
+ * Evidence-based resolution of an upload whose outcome is unknown, shared by
+ * the repeated `complete` and the reconciler (phase-03-videos/TD-02 revision
+ * IC-1, TD-09 revision IC-1). Every transition is compare-and-set; ambiguous
+ * evidence changes nothing.
+ */
+@Injectable()
+export class UploadRecoveryService {
+  private readonly logger = new Logger(UploadRecoveryService.name);
+
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly storage: StorageService,
+    private readonly publisher: JobPublisherService,
+  ) {}
+
+  async resolve(
+    videoId: string,
+    options: ResolveOptions = {},
+  ): Promise<RecoveryOutcome> {
+    const video = await this.loadWithToken(videoId);
+    if (
+      video.processing_status !== 'uploading' &&
+      video.processing_status !== 'completing'
+    ) {
+      return 'pending';
+    }
+    const from: VideoProcessingStatus[] = [video.processing_status];
+    const key = originalKey(video.id);
+    try {
+      // 1) Is the upload session still open? Checked BEFORE the object: the
+      //    object exists before the session disappears on completion.
+      let uploadGone = !video.upload_id;
+      if (video.upload_id) {
+        try {
+          await this.storage.listParts(key, video.upload_id);
+        } catch (error) {
+          if (!(error instanceof UploadNotFoundError)) throw error;
+          uploadGone = true;
+        }
+      }
+
+      // 2) What is at the exclusive key?
+      const head = await this.storage.headObject(key);
+      const input = {
+        head,
+        declaredSizeBytes: video.declared_size_bytes,
+        bindingToken: video.upload_binding_token,
+        manifest: options.manifest,
+      };
+      const proof = evaluateCompletionProof(input);
+
+      if (proof === 'proven') {
+        return (await this.markUploaded(video.id, from))
+          ? 'uploaded'
+          : 'pending';
+      }
+      const contradiction = contradictionOf(input);
+      if (proof === 'contradicted' && head && contradiction) {
+        return (await this.markInvalid(video.id, from, contradiction, head))
+          ? 'failed'
+          : 'pending';
+      }
+      if (head !== null) return 'pending'; // object present, proof unknown
+
+      if (uploadGone) {
+        if (video.upload_expires_at.getTime() <= Date.now()) {
+          return (await this.transition(video.id, from, 'expired', null))
+            ? 'expired'
+            : 'pending';
+        }
+        return (await this.transition(
+          video.id,
+          from,
+          'failed',
+          FAILURE_REASONS.UPLOAD_LOST,
+        ))
+          ? 'failed'
+          : 'pending';
+      }
+
+      if (options.allowRelease && video.processing_status === 'completing') {
+        return (await this.transition(
+          video.id,
+          ['completing'],
+          'uploading',
+          null,
+        ))
+          ? 'released'
+          : 'pending';
+      }
+      return 'pending';
+    } catch (error) {
+      if (error instanceof StorageError) return 'pending';
+      throw error;
+    }
+  }
+
+  /**
+   * Narrow refusal for the reconciler: when cleanup could not prove the key
+   * empty, an object positively carrying a missing or foreign upload-binding
+   * moves the row to `failed`/`UPLOAD_INVALID` (object retained, no job —
+   * TD-02/TD-09 revisions of 2026-11-12). It acts ONLY on a successful
+   * HeadObject; a storage error, an absent object or this upload's own
+   * binding change nothing, so an unreachable MinIO or a session still open
+   * is never read as a contradiction or as a lost upload.
+   */
+  async refuseForeignObject(videoId: string): Promise<RecoveryOutcome> {
+    const video = await this.loadWithToken(videoId);
+    if (
+      video.processing_status !== 'uploading' &&
+      video.processing_status !== 'completing'
+    ) {
+      return 'pending';
+    }
+    let head: ObjectHead | null;
+    try {
+      head = await this.storage.headObject(originalKey(video.id));
+    } catch (error) {
+      if (error instanceof StorageError) return 'pending';
+      throw error;
+    }
+    const contradiction = contradictionOf({
+      head,
+      declaredSizeBytes: video.declared_size_bytes,
+      bindingToken: video.upload_binding_token,
+    });
+    if (head === null || contradiction !== 'binding') return 'pending';
+    return (await this.markInvalid(
+      video.id,
+      [video.processing_status],
+      'binding',
+      head,
+    ))
+      ? 'failed'
+      : 'pending';
+  }
+
+  /** `from → uploaded` and the `video.process` job, in ONE transaction (TD-05). */
+  async markUploaded(
+    videoId: string,
+    from: VideoProcessingStatus[],
+  ): Promise<boolean> {
+    return await this.dataSource.transaction(async (manager) => {
+      const rows: unknown[] = await manager.query(
+        `UPDATE "videos" SET "processing_status" = 'uploaded', "failure_reason" = NULL
+         WHERE id = $1 AND "processing_status" = ANY($2::video_processing_status[])
+         RETURNING id`,
+        [videoId, from],
+      );
+      if (firstRows(rows).length === 0) return false;
+      await this.publisher.publishVideoProcess(videoId, manager);
+      return true;
+    });
+  }
+
+  /**
+   * Positive contradiction → `failed`/`UPLOAD_INVALID`, no job, and the video
+   * never becomes deliverable. The object is deleted ONLY when its identity is
+   * proven (it carries this upload's binding but the size or ETag is wrong —
+   * TD-02/TD-09). An object with a DIFFERENT binding was not produced by this
+   * authorized upload: it is never deleted automatically and is kept, with a
+   * structured log entry, for investigation and a later safe cleanup.
+   */
+  async markInvalid(
+    videoId: string,
+    from: VideoProcessingStatus[],
+    contradiction: Contradiction,
+    head: ObjectHead,
+  ): Promise<boolean> {
+    const key = originalKey(videoId);
+    // `failed` releases the upload's quota reservation (TD-13): only once no
+    // multipart session can still receive parts for this key (TD-14).
+    if (!(await this.noOpenSessions(videoId, key))) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'upload_invalid_deferred_session_open',
+          videoId,
+          key,
+          contradiction,
+          action: 'no transition: a multipart session may still be open',
+        }),
+      );
+      return false;
+    }
+    const moved = await this.transition(
+      videoId,
+      from,
+      'failed',
+      FAILURE_REASONS.UPLOAD_INVALID,
+    );
+    if (!moved) return false;
+    if (contradiction === 'binding') {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'upload_invalid_object_retained',
+          videoId,
+          key,
+          contradiction,
+          observedSizeBytes: head.contentLength,
+          observedEtag: head.etag,
+          action: 'not deleted: identity not proven; manual cleanup',
+        }),
+      );
+      return true;
+    }
+    // Identity proven (this upload's binding). The pinned MinIO ignores
+    // `If-Match` on DeleteObject (verified 2026-11-12), so re-read right
+    // before deleting: if the object changed meanwhile it is kept.
+    const current = await this.storage.headObject(key);
+    if (
+      current === null ||
+      current.etag !== head.etag ||
+      current.uploadBinding !== head.uploadBinding
+    ) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'upload_invalid_object_changed_before_delete',
+          videoId,
+          key,
+          contradiction,
+          action: current === null ? 'already absent' : 'not deleted: changed',
+        }),
+      );
+      return true;
+    }
+    await this.storage.deleteObject(key);
+    return true;
+  }
+
+  /**
+   * Positive evidence that no multipart session of the key is open: the
+   * known upload id answers `NoSuchUpload` AND the key's session listing is
+   * empty (the listing alone is never proof — TD-14). A storage error means
+   * "unknown" → false, so nothing is released on an unreachable MinIO.
+   */
+  private async noOpenSessions(videoId: string, key: string): Promise<boolean> {
+    const { upload_id: uploadId } = await this.loadWithToken(videoId);
+    try {
+      if (uploadId) {
+        try {
+          await this.storage.listParts(key, uploadId);
+          return false; // the known session still answers: it is open
+        } catch (error) {
+          if (!(error instanceof UploadNotFoundError)) throw error;
+        }
+      }
+      return (await this.storage.listMultipartUploads(key)).length === 0;
+    } catch (error) {
+      if (error instanceof StorageError) return false;
+      throw error;
+    }
+  }
+
+  /** Compare-and-set status change; false when the row was not in `from`. */
+  async transition(
+    videoId: string,
+    from: VideoProcessingStatus[],
+    to: VideoProcessingStatus,
+    failureReason: string | null,
+  ): Promise<boolean> {
+    const rows: unknown[] = await this.dataSource.query(
+      `UPDATE "videos" SET "processing_status" = $3, "failure_reason" = $4
+       WHERE id = $1 AND "processing_status" = ANY($2::video_processing_status[])
+       RETURNING id`,
+      [videoId, from, to, failureReason],
+    );
+    return firstRows(rows).length > 0;
+  }
+
+  async loadWithToken(videoId: string): Promise<Video> {
+    return await this.dataSource
+      .getRepository(Video)
+      .createQueryBuilder('video')
+      .addSelect('video.upload_binding_token')
+      .where('video.id = :videoId', { videoId })
+      .getOneOrFail();
+  }
+}

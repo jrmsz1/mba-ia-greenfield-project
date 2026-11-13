@@ -12,13 +12,18 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
+    "start:worker": "node dist/worker/main.worker",
+    "test:media": "MEDIA_TOOLS_REQUIRED=1 jest --selectProjects unit integration --testPathPatterns src/media src/worker",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
+    "test:unit": "jest --selectProjects unit",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:integration": "jest --runInBand --testRegex=\"\\.integration-spec\\.ts$\"",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:integration": "jest --selectProjects integration --runInBand",
+    "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
+    "verify:large-upload": "NODE_ENV=test ts-node --transpile-only scripts/verify-large-upload.ts",
+    "test:db:prepare": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' src/test/prepare-test-database.ts",
     "typeorm": "typeorm-ts-node-commonjs",
     "migration:run": "npm run typeorm -- migration:run -d src/database/data-source.ts",
     "migration:revert": "npm run typeorm -- migration:revert -d src/database/data-source.ts",
@@ -28,6 +33,8 @@
     "openapi:export": "ts-node -r tsconfig-paths/register src/openapi-export.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1167.0",
+    "@aws-sdk/s3-request-presigner": "^3.1167.0",
     "@nestjs-modules/mailer": "^2.3.4",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
@@ -42,7 +49,8 @@
     "class-validator": "^0.14.4",
     "handlebars": "^4.7.9",
     "joi": "^18.1.2",
-    "pg": "^8.20.0",
+    "pg": "^8.23.1",
+    "pg-boss": "^12.38.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "typeorm": "^0.3.28"
@@ -56,6 +64,7 @@
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.7",
+    "@types/pg": "^8.23.1",
     "@types/supertest": "^6.0.2",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
@@ -73,23 +82,58 @@
     "typescript-eslint": "^8.20.0"
   },
   "jest": {
-    "moduleFileExtensions": [
-      "js",
-      "json",
-      "ts"
-    ],
-    "rootDir": "src",
-    "testRegex": ".*\\.(spec|integration-spec)\\.ts$",
-    "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
-    },
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "src/**/*.(t|j)s"
     ],
-    "coverageDirectory": "../coverage",
-    "testEnvironment": "node",
-    "setupFiles": [
-      "dotenv/config"
+    "coverageDirectory": "coverage",
+    "maxWorkers": 1,
+    "projects": [
+      {
+        "displayName": "unit",
+        "moduleFileExtensions": [
+          "js",
+          "cjs",
+          "json",
+          "ts"
+        ],
+        "rootDir": "src",
+        "transform": {
+          "^.+\\.(t|j)s$": "ts-jest"
+        },
+        "testEnvironment": "node",
+        "testRegex": ".*\\.spec\\.ts$",
+        "setupFiles": [
+          "dotenv/config",
+          "<rootDir>/test/setup-unit-env.ts"
+        ],
+        "moduleNameMapper": {
+          "^pg-boss$": "<rootDir>/test/pg-boss-native.cjs"
+        }
+      },
+      {
+        "displayName": "integration",
+        "moduleFileExtensions": [
+          "js",
+          "cjs",
+          "json",
+          "ts"
+        ],
+        "moduleNameMapper": {
+          "^pg-boss$": "<rootDir>/test/pg-boss-native.cjs"
+        },
+        "rootDir": "src",
+        "transform": {
+          "^.+\\.(t|j)s$": "ts-jest"
+        },
+        "testEnvironment": "node",
+        "testRegex": ".*\\.integration-spec\\.ts$",
+        "globalSetup": "<rootDir>/test/global-setup.ts",
+        "globalTeardown": "<rootDir>/test/global-teardown.ts",
+        "setupFiles": [
+          "dotenv/config",
+          "<rootDir>/test/setup-test-env.ts"
+        ]
+      }
     ]
   }
 }

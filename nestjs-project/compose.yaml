@@ -1,22 +1,95 @@
+# StreamTube backend stack. Run ./scripts/setup.sh (or .\scripts\setup.ps1)
+# from the repository root first: it generates the per-service credential
+# files in ../.local/secrets/, provisions MinIO, installs, builds and migrates.
+#
+# Credentials (phase-03-videos/TD-16 revisions of 2026-11-12): every secret
+# reaches its container through its own env_file, generated outside Git and
+# outside every bind mount (only this directory is mounted). The mounted .env
+# holds no storage or root credential. Never run a plain `docker compose
+# config`: it would print the env_file values; use `config --quiet` or
+# `config --no-env-resolution`.
+#
+# Host ports default to the usual values and can be moved with the
+# STREAMTUBE_*_PORT variables (e.g. to run a second, isolated copy).
 services:
   nestjs-api:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile.dev
+    # The compiled API (built by the setup script). For hot reload see
+    # nestjs-project/CLAUDE.md ("Development Environment").
+    command: ["npm", "run", "start:prod"]
     ports:
-      - 3000:3000
+      - "${STREAMTUBE_API_PORT:-3000}:3000"
     volumes:
       - .:/home/node/app
+    # Only the API identity and the read-only delivery identity: no root,
+    # no maintenance and no test credential (TD-16).
+    env_file:
+      - path: ../.local/secrets/api.env
+        required: true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
     depends_on:
       db:
         condition: service_healthy
       mailpit:
         condition: service_started
+      minio:
+        condition: service_healthy
+
+  # Video worker (phase-03-videos/TD-06, TD-16): second entrypoint of the same
+  # code (mounted), FFmpeg pinned in its image, non-root, no published ports.
+  # It executes the compiled dist/worker/main.worker.js (built by the setup).
+  worker:
+    # tini as PID 1: SIGTERM is honored even before Node installs a handler.
+    init: true
+    build:
+      context: ./docker/worker
+    volumes:
+      - .:/srv/app
+    # Only the worker identity: no root, no delivery, no maintenance and no
+    # test credential (TD-16).
+    env_file:
+      - path: ../.local/secrets/worker.env
+        required: true
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    # SIGTERM → enableShutdownHooks → boss.stop({ graceful: true }).
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "${WORKER_CPU_LIMIT:-2}"
+          memory: "${WORKER_MEMORY_LIMIT:-2g}"
+
+  # Pinned, SHA-256-verified MinIO (phase-03-videos/TD-03, TD-16). The root
+  # pair comes only from minio.env; buckets and identities are created by the
+  # on-demand provisioning container (docker/storage-provision), never here.
+  minio:
+    build:
+      context: ./docker/minio
+    ports:
+      - "${STREAMTUBE_MINIO_PORT:-9000}:9000"
+      - "${STREAMTUBE_MINIO_CONSOLE_PORT:-9001}:9001"
+    env_file:
+      - path: ../.local/secrets/minio.env
+        required: true
+    environment:
+      - MINIO_API_CORS_ALLOW_ORIGIN=${MINIO_API_CORS_ALLOW_ORIGIN:-http://localhost:3001}
+    volumes:
+      - minio-data:/data
 
   db:
     image: postgres:17
     ports:
-      - "5432:5432"
+      - "${STREAMTUBE_DB_PORT:-5432}:5432"
     environment:
       - POSTGRES_USER=streamtube
       - POSTGRES_PASSWORD=streamtube
@@ -30,7 +103,8 @@ services:
   mailpit:
     image: axllent/mailpit
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "${STREAMTUBE_MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${STREAMTUBE_MAILPIT_UI_PORT:-8025}:8025"
 
-
+volumes:
+  minio-data:

@@ -4,8 +4,13 @@ const requiredEnv = {
   DB_USERNAME: 'user',
   DB_PASSWORD: 'pass',
   DB_NAME: 'db',
-  JWT_SECRET: 'secret',
-  JWT_REFRESH_SECRET: 'refresh-secret',
+  // Fictitious values with the shape the setup scripts generate.
+  JWT_SECRET: 'fixture-access-jwt-0123456789abcdefghijklmnopqrstuv',
+  JWT_REFRESH_SECRET: 'fixture-refresh-jwt-0123456789abcdefghijklmnopqrstu',
+  S3_ACCESS_KEY_ID: 'access-key',
+  S3_SECRET_ACCESS_KEY: 'secret-key',
+  S3_DELIVERY_ACCESS_KEY_ID: 'delivery-key',
+  S3_DELIVERY_SECRET_ACCESS_KEY: 'delivery-secret',
 };
 
 const validate = (env: Record<string, string>) =>
@@ -32,8 +37,8 @@ describe('envValidationSchema — SWAGGER_ENABLED', () => {
   });
 
   it('should apply default false when SWAGGER_ENABLED is not set', () => {
-    const { value, error } = validate({});
-    expect(error).toBeUndefined();
-    expect(value.SWAGGER_ENABLED).toBe('false');
+    const result = validate({});
+    expect(result.error).toBeUndefined();
+    expect(result.value).toHaveProperty('SWAGGER_ENABLED', 'false');
   });
 });

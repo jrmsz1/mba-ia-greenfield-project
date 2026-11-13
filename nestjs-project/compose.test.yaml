@@ -1,0 +1,53 @@
+# Ephemeral test containers (phase-03-videos/TD-15, TD-16 "evaluator setup"
+# revisions of 2026-11-12). Never started by `docker compose up` (profile
+# `test`) and never permanent: run them only as one-off, finite commands,
+#
+#   docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm test
+#   docker compose -f compose.yaml -f compose.test.yaml run --rm test-worker npm run test:media
+#
+# or simply ./scripts/verify.sh (.\scripts\verify.ps1).
+#
+# Each container receives ONLY the restricted test identities (the three
+# S3_TEST_* pairs, provisioned on S3_TEST_BUCKET) — no root, no production
+# identity, no maintenance credential. The profile is not the isolation: the
+# test harness fails closed (explicit test context, test database and its
+# server identity, S3_TEST_BUCKET, PGBOSS_TEST_SCHEMA, refusal of root,
+# production and maintenance credentials). Suites boot the application
+# in-process; they never call the operational API nor consume its jobs.
+services:
+  test-api:
+    profiles: ["test"]
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - .:/home/node/app
+    env_file:
+      - path: ../.local/secrets/test-api.env
+        required: true
+    restart: "no"
+    command: ["npm", "test"]
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      minio:
+        condition: service_healthy
+
+  test-worker:
+    profiles: ["test"]
+    build:
+      context: ./docker/worker
+    volumes:
+      - .:/srv/app
+    env_file:
+      - path: ../.local/secrets/test-worker.env
+        required: true
+    restart: "no"
+    command: ["npm", "run", "test:media"]
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy

@@ -1,0 +1,311 @@
+/**
+ * SI-03.10 — evidence-based resolution branches not reached through
+ * `complete` (expired, lost upload, reconciler release, ambiguous storage).
+ */
+import { type INestApplication } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { Test } from '@nestjs/testing';
+import { randomBytes } from 'node:crypto';
+import type { PgBoss } from 'pg-boss';
+import { DataSource } from 'typeorm';
+import { RefreshToken } from '../auth/entities/refresh-token.entity';
+import { VerificationToken } from '../auth/entities/verification-token.entity';
+import { Channel } from '../channels/entities/channel.entity';
+import databaseConfig from '../config/database.config';
+import queueConfig from '../config/queue.config';
+import uploadConfig from '../config/upload.config';
+import workerConfig from '../config/worker.config';
+import { JobPublisherService } from '../queue/job-publisher.service';
+import { PGBOSS, QUEUES } from '../queue/queue.constants';
+import { QueueModule } from '../queue/queue.module';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { UPLOAD_BINDING_METADATA_KEY } from '../storage/storage.constants';
+import {
+  buildS3Clients,
+  destroyS3Clients,
+  type S3Clients,
+} from '../storage/s3-clients.provider';
+import { StorageUnavailableError } from '../storage/storage-errors';
+import { originalKey } from '../storage/storage-key';
+import { StorageService } from '../storage/storage.service';
+import {
+  cleanAllTables,
+  createTestTypeOrmModule,
+} from '../test/create-test-data-source';
+import { verifyTestBucket, testStorageConfig } from '../test/test-storage';
+import { createTestOwner, type TestOwner } from '../test/video-fixtures';
+import { User } from '../users/entities/user.entity';
+import { Video } from './entities/video.entity';
+import { UploadRecoveryService } from './upload-recovery.service';
+import { VideoUploadService } from './video-upload.service';
+
+jest.setTimeout(60_000);
+
+const ENTITIES = [User, Channel, RefreshToken, VerificationToken, Video];
+const MIB = 1024 * 1024;
+
+describe('UploadRecoveryService (real PostgreSQL + MinIO)', () => {
+  let app: INestApplication;
+  let dataSource: DataSource;
+  let boss: PgBoss;
+  let clients: S3Clients;
+  let storage: StorageService;
+  let uploads: VideoUploadService;
+  let recovery: UploadRecoveryService;
+  let owner: TestOwner;
+
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({
+          isGlobal: true,
+          load: [databaseConfig, queueConfig, workerConfig],
+        }),
+        createTestTypeOrmModule(ENTITIES, { synchronize: false }),
+        QueueModule.register({ role: 'api' }),
+      ],
+    }).compile();
+    app = moduleRef.createNestApplication();
+    await app.init();
+    dataSource = app.get(DataSource);
+    boss = app.get<PgBoss>(PGBOSS);
+    const config = testStorageConfig();
+    clients = buildS3Clients(config);
+    storage = new StorageService(clients, config);
+    await verifyTestBucket(clients.internal, config.bucket);
+    uploads = new VideoUploadService(dataSource, storage, {
+      ...uploadConfig(),
+      partSizeBytes: 5 * MIB,
+    });
+    recovery = new UploadRecoveryService(
+      dataSource,
+      storage,
+      app.get(JobPublisherService),
+    );
+  });
+
+  afterAll(async () => {
+    await app.close();
+    destroyS3Clients(clients);
+  });
+
+  beforeEach(async () => {
+    jest.restoreAllMocks();
+    await cleanAllTables(dataSource);
+    await boss.deleteAllJobs(QUEUES.VIDEO_PROCESS);
+    owner = await createTestOwner(dataSource);
+  });
+
+  const started = async (): Promise<Video> =>
+    (
+      await uploads.start(
+        owner.user.id,
+        `k-${randomBytes(4).toString('hex')}`,
+        { filename: 'clip.mp4', sizeBytes: 12 * MIB },
+      )
+    ).video;
+
+  const setStatus = async (id: string, status: string): Promise<void> => {
+    await dataSource.query(
+      `UPDATE "videos" SET "processing_status" = $2 WHERE id = $1`,
+      [id, status],
+    );
+  };
+
+  const row = async (id: string) =>
+    await dataSource.getRepository(Video).findOneByOrFail({ id });
+
+  it('marks failed/UPLOAD_LOST when the upload session is gone and no object exists', async () => {
+    const video = await started();
+    await setStatus(video.id, 'completing');
+    await storage.abortMultipartUpload(
+      originalKey(video.id),
+      video.upload_id as string,
+    );
+
+    expect(await recovery.resolve(video.id)).toBe('failed');
+    expect(await row(video.id)).toMatchObject({
+      processing_status: 'failed',
+      failure_reason: 'UPLOAD_LOST',
+    });
+  });
+
+  it('marks expired when the session is gone, no object exists and the upload expired', async () => {
+    const video = await started();
+    await dataSource.query(
+      `UPDATE "videos" SET "upload_expires_at" = now() - interval '1 minute' WHERE id = $1`,
+      [video.id],
+    );
+    await storage.abortMultipartUpload(
+      originalKey(video.id),
+      video.upload_id as string,
+    );
+
+    expect(await recovery.resolve(video.id)).toBe('expired');
+    expect((await row(video.id)).processing_status).toBe('expired');
+  });
+
+  it('keeps a completing row when the session is still open and release is not requested', async () => {
+    const video = await started();
+    await setStatus(video.id, 'completing');
+
+    expect(await recovery.resolve(video.id)).toBe('pending');
+    expect((await row(video.id)).processing_status).toBe('completing');
+  });
+
+  it('releases a completing claim back to uploading only when release is requested', async () => {
+    const video = await started();
+    await setStatus(video.id, 'completing');
+
+    expect(await recovery.resolve(video.id, { allowRelease: true })).toBe(
+      'released',
+    );
+    expect((await row(video.id)).processing_status).toBe('uploading');
+  });
+
+  it('changes nothing when storage answers ambiguously', async () => {
+    const video = await started();
+    await setStatus(video.id, 'completing');
+    jest
+      .spyOn(storage, 'listParts')
+      .mockRejectedValueOnce(
+        new StorageUnavailableError('ambiguous', 'ECONNRESET', 'reset'),
+      );
+
+    expect(await recovery.resolve(video.id, { allowRelease: true })).toBe(
+      'pending',
+    );
+    expect((await row(video.id)).processing_status).toBe('completing');
+  });
+
+  it('ignores rows outside uploading/completing', async () => {
+    const video = await started();
+    await setStatus(video.id, 'cancelled');
+
+    expect(await recovery.resolve(video.id)).toBe('pending');
+    expect((await row(video.id)).processing_status).toBe('cancelled');
+  });
+
+  describe('positive contradiction (session gone, object at the key)', () => {
+    /** Aborts the session and writes an object at the video's exclusive key. */
+    const objectAtKey = async (
+      video: Video,
+      binding: string | null,
+      sizeBytes: number,
+    ): Promise<void> => {
+      const key = originalKey(video.id);
+      await storage.abortMultipartUpload(key, video.upload_id as string);
+      await clients.internal.send(
+        new PutObjectCommand({
+          Bucket: storage.bucket,
+          Key: key,
+          Body: randomBytes(sizeBytes),
+          Metadata:
+            binding === null ? {} : { [UPLOAD_BINDING_METADATA_KEY]: binding },
+        }),
+      );
+    };
+
+    const tokenOf = async (id: string): Promise<string> =>
+      (await recovery.loadWithToken(id)).upload_binding_token;
+
+    it('keeps an object with NO binding metadata (identity not proven): failed/UPLOAD_INVALID, no job, no DeleteObject', async () => {
+      const video = await started();
+      await objectAtKey(video, null, 12 * MIB);
+      const deleteObject = jest.spyOn(storage, 'deleteObject');
+
+      expect(await recovery.resolve(video.id)).toBe('failed');
+
+      expect(await row(video.id)).toMatchObject({
+        processing_status: 'failed',
+        failure_reason: 'UPLOAD_INVALID',
+      });
+      expect(deleteObject).not.toHaveBeenCalled();
+      expect(await storage.headObject(originalKey(video.id))).not.toBeNull();
+      expect(
+        await boss.findJobs(QUEUES.VIDEO_PROCESS, { key: video.id }),
+      ).toHaveLength(0);
+      // A repeated resolution changes nothing.
+      expect(await recovery.resolve(video.id)).toBe('pending');
+      expect(deleteObject).not.toHaveBeenCalled();
+    });
+
+    it('refuseForeignObject: refuses a missing or foreign binding, but never acts on a storage error or on the own binding of this upload', async () => {
+      const missing = await started();
+      await objectAtKey(missing, null, 1024);
+      const own = await started();
+      await objectAtKey(own, await tokenOf(own.id), 1024);
+      const unreachable = await started();
+      await objectAtKey(unreachable, 'someone-else', 1024);
+      const deleteObject = jest.spyOn(storage, 'deleteObject');
+
+      expect(await recovery.refuseForeignObject(missing.id)).toBe('failed');
+      expect(await recovery.refuseForeignObject(own.id)).toBe('pending');
+      jest
+        .spyOn(storage, 'headObject')
+        .mockRejectedValueOnce(
+          new StorageUnavailableError('transient', 'ECONNREFUSED', 'down'),
+        );
+      expect(await recovery.refuseForeignObject(unreachable.id)).toBe(
+        'pending',
+      );
+
+      expect((await row(missing.id)).failure_reason).toBe('UPLOAD_INVALID');
+      expect((await row(own.id)).processing_status).toBe('uploading');
+      expect((await row(unreachable.id)).processing_status).toBe('uploading');
+      expect(deleteObject).not.toHaveBeenCalled();
+    });
+
+    it('keeps an object with ANOTHER binding (identity not proven): failed/UPLOAD_INVALID, no job, no DeleteObject', async () => {
+      const video = await started();
+      await objectAtKey(video, 'foreign-binding', 12 * MIB);
+      const deleteObject = jest.spyOn(storage, 'deleteObject');
+
+      expect(await recovery.resolve(video.id)).toBe('failed');
+
+      expect(await row(video.id)).toMatchObject({
+        processing_status: 'failed',
+        failure_reason: 'UPLOAD_INVALID',
+      });
+      expect(deleteObject).not.toHaveBeenCalled();
+      expect(await storage.headObject(originalKey(video.id))).not.toBeNull();
+      expect(
+        await boss.findJobs(QUEUES.VIDEO_PROCESS, { key: video.id }),
+      ).toHaveLength(0);
+    });
+
+    it('deletes an object that carries THIS binding but the wrong size (identity proven, TD-02/TD-09)', async () => {
+      const video = await started();
+      await objectAtKey(video, await tokenOf(video.id), 1 * MIB);
+
+      expect(await recovery.resolve(video.id)).toBe('failed');
+
+      expect((await row(video.id)).failure_reason).toBe('UPLOAD_INVALID');
+      expect(await storage.headObject(originalKey(video.id))).toBeNull();
+      expect(
+        await boss.findJobs(QUEUES.VIDEO_PROCESS, { key: video.id }),
+      ).toHaveLength(0);
+    });
+
+    it('does not delete when the object changes between the proof and the delete (no conditional delete on the pinned MinIO)', async () => {
+      const video = await started();
+      await objectAtKey(video, await tokenOf(video.id), 1 * MIB);
+      const real = storage.headObject.bind(
+        storage,
+      ) as StorageService['headObject'];
+      jest
+        .spyOn(storage, 'headObject')
+        .mockImplementationOnce(real)
+        .mockImplementationOnce(async (key) => {
+          const head = await real(key);
+          return head && { ...head, etag: '"replaced-meanwhile"' };
+        });
+      const deleteObject = jest.spyOn(storage, 'deleteObject');
+
+      expect(await recovery.resolve(video.id)).toBe('failed');
+
+      expect(deleteObject).not.toHaveBeenCalled();
+      expect(await storage.headObject(originalKey(video.id))).not.toBeNull();
+    });
+  });
+});
