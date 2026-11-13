@@ -11,7 +11,7 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
 |---|---|---|---|
 | 1 | TypeORM + pg-boss transactional integration (TD-05) | PASS — approved 2026-11-11 | docs/phases/phase-03-videos/spike-pgboss.md; src/queue/pgboss-spike.integration-spec.ts |
 | 2 | Pinned MinIO image, SHA-256, Compose, healthcheck, CORS (TD-03, TD-16) | PASS — evidence executed 2026-11-11 (minisign/ARM64 preserved as options, not exercised) | docs/phases/phase-03-videos/gate-02-minio.md |
-| 3 | 10 GiB upload end to end (TD-01, TD-08, TD-13) | PENDING | — |
+| 3 | 10 GiB upload end to end (TD-01, TD-08, TD-13) | PENDING — evidence executed 2026-11-13 (16/16 criteria PASS), awaiting human approval | docs/phases/phase-03-videos/verification-10gib.md; scripts/verify-large-upload.ts |
 | 4 | Ambiguous completion: identity and integrity proof (TD-02) | PASS — approved by the user 2026-11-12 on commit `b9a31844b054649b43a733625ef64ff29d1f53b8` (evidence: 59 tests on the real PostgreSQL + pinned MinIO, command `docker compose exec -T nestjs-api npx jest --selectProjects unit integration --testPathPatterns 'completion-proof|video-completion|upload-recovery|video-reconciler' --verbose`; regression npm test 470 + 32 skipped, test:e2e 84, worker test:media 110) | docs/phases/phase-03-videos/gate-04-05-completion.md; src/videos/video-completion.service.integration-spec.ts; src/videos/upload-recovery.service.integration-spec.ts; src/worker/video-reconciler.worker.integration-spec.ts |
 | 5 | Concurrent completions (TD-02, TD-09) | PASS — approved by the user 2026-11-12 (evidence: 5 concurrent service-level completions → one `uploaded`, one job; command `npx jest --selectProjects integration --testPathPatterns video-completion`) | docs/phases/phase-03-videos/gate-04-05-completion.md; src/videos/video-completion.service.integration-spec.ts |
 | 6 | Real media fixtures (TD-07, TD-15) | PASS — approved by the user 2026-11-12 (evidence: `docker compose run --rm --no-deps worker npm run test:media` → 65 passed, 23 integration on real FFmpeg 7.1.5) | docs/phases/phase-03-videos/gate-06-media.md; src/media/media-probe.integration-spec.ts |
@@ -198,6 +198,10 @@ _Execution status of the 8 gates listed in context.md → Testing Requirements (
   - openapi.json regenerated (both routes: 200/401/404/409/429).
 
 ### SI-03.17 — Verificação ponta a ponta de 10 GiB (Verification Gate 3)
-- **Status:** pending
-- **Tests:** —
-- **Observations:** none
+- **Status:** executed — awaiting Gate 3 approval
+- **Tests:** on-demand verification `npm run verify:large-upload` in the ephemeral test-worker container (outside every Jest project): 16/16 checks PASS; independent full-object SHA-256 check; regression after the run `verify.sh --full` 15/15 (npm test 596 + 32 skipped FFmpeg suites run in test-worker, test:e2e 92, test:media 113, tsc, eslint)
+- **Observations:**
+  - File: exactly 10 737 418 240 B, valid MP4/H.264 yuv420p + AAC (3600 s), SHA-256 51cb136c…617885; generation command recorded and reproduced byte-identically.
+  - Upload: 160 × 64 MiB parts PUT directly to MinIO with just-in-time presigned URLs; interrupted after 80 parts (3 in-flight aborted), resumed with exactly the 80 missing parts; quota refusal at the pending-bytes limit; API RSS 175–196 MiB (variation 21 MiB).
+  - Completion proof (key, upload_id, exact size, upload-binding, session closed); one video.process job only after completion; worker ready in 5 s reading 21.9 MiB by Range (0.21 %); duration 3600 s, metadata, thumbnail; Range 206 at start and end of the object byte-identical; download attachment.
+  - Kept, not deleted: the 10 GiB object + thumbnail in the test bucket and the streamtube-gate3-media volume (10 GiB); host disk −20.4 GiB. Main environment, the 47 historical sessions and the later ones preserved.
