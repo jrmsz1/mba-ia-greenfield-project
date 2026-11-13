@@ -186,6 +186,129 @@ NestJS with standard module structure. Source lives in `src/`, compiled output i
 - Each domain feature gets its own module (e.g., `UsersModule`, `VideosModule`) registered in `AppModule`
 - Controllers handle HTTP routing; Services hold business logic; both are scoped to their module
 
+## Videos (Phase 03)
+
+Backend-only phase: draft video, direct multipart upload to object storage, asynchronous processing and delivery URLs. Plan: `docs/phases/phase-03-videos/phase-03-videos.md` (Data Model, API Contracts, Authorization Matrix, Error Catalog, Events/Messages); decisions: `docs/decisions/technical-decisions-phase-03-videos.md` (TD-01…TD-16). No title, description or publishing yet: Phase 03 only writes `publication = draft`, and there is no endpoint for the thumbnail.
+
+### Modules
+
+| Directory | Responsibility |
+|---|---|
+| `src/videos/` | `VideosModule`: `VideosController`, the `Video` entity (`videos` table, migration `src/database/migrations/1794453245701-CreateVideos.ts`), upload start (`video-upload.service.ts`), part URLs / status / abort (`video-upload-parts.service.ts`), completion (`video-completion.service.ts`, `upload-recovery.service.ts`, `completion-proof.ts`), delivery URLs (`video-delivery.service.ts`), the ownership policy (`video-access.policy.ts`), the public id (`public-id.generator.ts`), abuse limits (`abuse-limits.ts`, `upload-admission.ts`) |
+| `src/storage/` | `StorageModule`: the S3 clients (`s3-clients.provider.ts`, AWS SDK v3), `StorageService` (multipart, presigning, object checks), object keys (`storage-key.ts`), bucket verification at startup |
+| `src/queue/` | `QueueModule`: pg-boss on the same PostgreSQL (schema `PGBOSS_SCHEMA`, default `pgboss`; created by migration `1794452175254-CreatePgBossSchema.ts`), queue creation, `JobPublisherService`, the TypeORM transaction adapter (`typeorm-pgboss-db.adapter.ts`) |
+| `src/media/` | `MediaModule`: `FfprobeRunner` and `FfmpegRunner` (system binaries via `spawn`, bounded time and output), the accepted-format rule (`media-rule.ts`), thumbnail position (`thumbnail-policy.ts`) |
+| `src/worker/` | Second entrypoint (`main.worker.ts`, compiled to `dist/worker/main.worker.js`, Compose service `worker`): `VideoProcessingWorker` and `VideoReconcilerWorker` |
+
+### Endpoints (`src/videos/videos.controller.ts`)
+
+| Method and path | Purpose | Success |
+|---|---|---|
+| `POST /videos` | Start an upload: creates the draft row and the S3 multipart session. Header `Idempotency-Key` required; body `filename`, `size_bytes`, optional `content_type`. Returns `id`, `upload_id`, `part_size_bytes`, `expected_part_count`, `upload_expires_at`. | 201 (200 on an idempotent replay) |
+| `GET /videos/:id` | Status of the owner's video (`processing_status`, `failure_reason`, `duration_seconds`, `media_metadata`, `has_thumbnail`, …) | 200 |
+| `POST /videos/:id/upload/part-urls` | Presigned `UploadPart` URLs for 1–100 `part_numbers` | 200 |
+| `GET /videos/:id/upload` | Resume information: parts already in storage (number, size, ETag) and missing part numbers | 200 |
+| `POST /videos/:id/upload/complete` | Completes the upload from the ordered manifest (`parts`: `part_number`, `etag`) and enqueues processing | 200; 202 + `Retry-After` while the outcome is not proven |
+| `GET /videos/:id/playback-url` | Presigned streaming URL (`ready` only) | 200 |
+| `GET /videos/:id/download-url` | Presigned download URL (`ready` only) | 200 |
+| `DELETE /videos/:id/upload` | Cancels an incomplete upload | 204 |
+
+`:id` is the public id. Error codes and statuses: plan §Error Catalog and the `@ApiResponse` declarations in the controller (OpenAPI with `SWAGGER_ENABLED=true`).
+
+### Authentication and authorization (TD-12, TD-13)
+
+- Every route requires the access token (global `JwtAuthGuard`); none is public. `POST /videos` needs the user's channel (`403 CHANNEL_REQUIRED`).
+- One ownership rule, `VideoAccessPolicy.findOwnedVideoOrThrow`: the video must belong to the caller's channel. Malformed ids, unknown ids and other users' videos all answer `404 VIDEO_NOT_FOUND`.
+- The controller is outside the authentication throttler (`@SkipThrottle()`); abuse limits are counted in PostgreSQL instead (`abuse-limits.ts`): 20 upload starts per hour per owner, part URLs up to 10 × `expected_part_count` per upload, 120 status + complete calls per video per hour, 60 playback + download URLs per video per hour, plus `MAX_ACTIVE_UPLOADS_PER_OWNER` (3) and `MAX_PENDING_UPLOAD_BYTES_PER_OWNER` (20 GiB).
+
+### Upload flow (TD-01, TD-02, TD-13)
+
+1. `POST /videos` validates `size_bytes` against `MAX_UPLOAD_BYTES` (default 10 737 418 240 = 10 GiB; larger → `400 UPLOAD_SIZE_EXCEEDED`), reserves quota, inserts the draft (`publication = draft`, `processing_status = uploading`) and calls `CreateMultipartUpload`.
+2. The client asks for part URLs and sends each part (`UPLOAD_PART_SIZE_BYTES`, default 64 MiB, so 160 parts for 10 GiB) **directly to MinIO** with `PUT` on the presigned URL. The file never goes through the API.
+3. An interrupted upload resumes with `GET /videos/:id/upload` (missing parts) and new part URLs, until `upload_expires_at` (`UPLOAD_EXPIRY_HOURS`, default 24).
+4. `POST /videos/:id/upload/complete` checks the manifest against storage, completes the multipart upload, proves the final object (size, ETag, upload binding) and then, in **one** PostgreSQL transaction, moves the row to `uploaded` and enqueues `video.process`.
+
+Presigned URLs are signed with SigV4 for `S3_PUBLIC_ENDPOINT` (the host-reachable MinIO). They expire after `UPLOAD_PART_PRESIGN_TTL_SECONDS` (900), `PLAYBACK_PRESIGN_TTL_SECONDS` (3600), `DOWNLOAD_PRESIGN_TTL_SECONDS` (900) and, for the worker's input, `PROCESSING_INPUT_PRESIGN_TTL_SECONDS` (3600). Responses carrying URLs are `Cache-Control: no-store`.
+
+### Status lifecycle (TD-09)
+
+Two independent columns:
+
+- `publication` (enum `video_publication`): only `draft` in Phase 03.
+- `processing_status` (enum `video_processing_status`):
+
+```
+uploading ─► completing ─► uploaded ─► processing ─► ready
+   │              │             │            └─────► failed
+   │              ├─► uploading (claim released)
+   │              └─► failed (UPLOAD_LOST, UPLOAD_INVALID) / expired
+   ├─► cancelled  (DELETE /videos/:id/upload)
+   └─► expired    (reconciler, after upload_expires_at)
+```
+
+| Transition | Where |
+|---|---|
+| → `uploading` | `VideoUploadService.start` |
+| `uploading → completing` | `VideoCompletionService` (completion claim) |
+| `completing → uploaded` (+ job) | `UploadRecoveryService.markUploaded` |
+| `completing → uploading / failed / expired` | `UploadRecoveryService.resolve` (also from `uploading`) |
+| `uploading → cancelled` | `VideoUploadPartsService.abort` |
+| `uploading → expired` | `VideoReconcilerWorker` |
+| `uploaded → processing → ready / failed` | `VideoProcessingWorker` |
+
+`failure_reason` values: `UPLOAD_LOST`, `UPLOAD_INVALID`, `UNSUPPORTED_FORMAT`, `DURATION_LIMIT_EXCEEDED`, `PROCESSING_FAILED` (`src/videos/video.constants.ts`). Every transition is a conditional `UPDATE … WHERE processing_status = <expected>`, so a duplicate or late delivery changes nothing.
+
+### Queue and worker (TD-05, TD-06, TD-14)
+
+| Queue | Producer | Consumer |
+|---|---|---|
+| `video.process` | the API, inside the completion transaction (and the reconciler when an `uploaded` row has no job) | `VideoProcessingWorker` |
+| `video.reconcile` | pg-boss schedule `*/5 * * * *` | `VideoReconcilerWorker` |
+
+- **`video.process` delivery:** the payload is only `{ videoId }` (the internal UUID). The queue policy is `exclusive` with `singletonKey = videoId`, so there is at most one queued or active job per video.
+- **Retries:** transient errors are retried up to 3 times (first delay 30 s, with backoff). After the last one the video becomes `failed` / `PROCESSING_FAILED`.
+- **Concurrency and timeout:** `WORKER_CONCURRENCY` defaults to 1. `WORKER_JOB_TIMEOUT_SECONDS` (1800) is the job's pg-boss expiry.
+- **The reconciler:** expires abandoned uploads, resolves stale `completing` claims (`COMPLETING_STALE_MINUTES`, 15) and republishes missing `video.process` jobs.
+- **Process layout:** the worker is a separate process and container from the same codebase. Only its image has FFmpeg; the API image does not.
+
+### Processing: ffprobe, ffmpeg, metadata, thumbnail (TD-07, TD-08)
+
+Each attempt re-reads the row, mints a fresh presigned GET for the original and lets ffprobe/ffmpeg read it over HTTP Range (no full copy to disk):
+
+1. **ffprobe** reads the format and streams. Accepted: an MP4 container (major brand `isom`, `iso2`, `mp41`, `mp42` or `avc1`) with H.264 `yuv420p` video, audio absent or AAC, and a positive duration. Anything else → `failed` / `UNSUPPORTED_FORMAT`. A duration above `MAX_VIDEO_DURATION_SECONDS` (14 400) → `DURATION_LIMIT_EXCEEDED`.
+2. **What is stored:** `duration_seconds` and `media_metadata` (format, brand, video codec, width, height, pixel format, audio codec, bit rate, size).
+3. **ffmpeg** extracts one JPEG frame:
+   - at 10 % of the duration, bounded to 1–10 s;
+   - at the first frame for clips under 2 s.
+4. **The thumbnail** is uploaded to the storage and `thumbnail_generated_at` is set, together with `ready`.
+
+Scratch files live in a per-job temporary directory removed in `finally`.
+
+### Storage layout (TD-03, TD-10, TD-16)
+
+- **Buckets:**
+  - `S3_BUCKET` (default `streamtube-videos`) for the application;
+  - `S3_TEST_BUCKET` (default `streamtube-videos-test`, must end in `-test`) for the test suites only.
+  Both are created by the provisioning step of the setup script, never by the application.
+- **Keys** derive only from the internal UUID, never from the public id or the client filename:
+  - `videos/<uuid>/original` for the uploaded file;
+  - `videos/<uuid>/thumbnail.jpg` for the thumbnail.
+- **Identities:** the API, the worker and the read-only delivery signer each use their own restricted MinIO identity. Root credentials never reach them. (Credential files: see "Development Environment".)
+- **Public URL:** `public_id` is 11 random base62 characters with a unique index, regenerated on collision. It is the `:id` of every route.
+
+### Streaming and download (TD-11)
+
+`playback-url` and `download-url` return a presigned GET (`url`, `expires_at`) for the original, only when `processing_status = ready` (otherwise `409 VIDEO_NOT_READY`). The client then talks to MinIO directly:
+
+- **Streaming:** MinIO serves HTTP Range (`206 Partial Content`), so playback never needs the full file. The client asks for a new URL before `expires_at` and keeps its position.
+- **Download:** the URL carries `Content-Disposition: attachment` with the sanitized original filename (RFC 6266).
+
+### Setup and tests
+
+- **Setup:** `../scripts/setup.sh` (or `setup.ps1`) generates credentials, provisions MinIO, builds, migrates and starts the stack. `../scripts/verify.sh` runs the quick check; `../scripts/verify.sh --full` runs the full regression.
+- **Test containers:** the integration, e2e and media suites run only in the ephemeral `test-api` / `test-worker` containers. See "Commands" and "Test execution" above; `npm run test:media` runs in `test-worker`.
+- **Optional large-file check:** the 10 GiB end-to-end check (Verification Gate 3) is the explicit `npm run verify:large-upload` in `test-worker`, not part of any suite. The steps are in the root `README.md`, the approved result in `docs/phases/phase-03-videos/verification-10gib.md`.
+
 ## Code Conventions
 
 - **TypeScript:** `nodenext` module resolution, `ES2023` target, `strictNullChecks` on, `noImplicitAny` off

@@ -34,6 +34,25 @@ The documented snapshots are older than the researched versions. The API surface
 
 The Context7 documentation shows `send({ db })` composing inside a caller-owned transaction only for the **Knex, Kysely and Drizzle** adapters. **No TypeORM adapter is documented, and the integration of TypeORM with `pg-boss` was not exercised** in this phase's research. It remains one of the eight pending validations (TD-05): same-transaction enqueue, rollback, commit and durable recovery must be demonstrated by the planning spike before it is relied upon.
 
+> **Later evidence (added 2026-11-13; the paragraph above is the original note, kept as written).** The spike proved the integration. Evidence: SI-03.1, `spike-pgboss.md`, Verification Gate 1, PASS, approved by the user on 2026-11-11, commit `4fc0aec`.
+>
+> - **What it proved:** all eight TD-05 conditions passed with the versions actually installed (`pg-boss` 12.38.2, `pg` 8.23.1, `typeorm` 0.3.28):
+>   - same-transaction enqueue;
+>   - no job on rollback;
+>   - commit keeps both the row and the job;
+>   - deterministic schema;
+>   - isolated test schema;
+>   - dedupe, retries and recovery after `SIGKILL`;
+>   - no transaction open while a video is processed.
+> - **How:** `send(…, { db })` runs on the TypeORM `EntityManager` of `dataSource.transaction()` through `src/queue/typeorm-pgboss-db.adapter.ts`. The adapter refuses a manager without an active transaction.
+> - **Where it is used:** `UploadRecoveryService.markUploaded` moves the video to `uploaded` and publishes `video.process` in one transaction.
+> - **Later confirmations:**
+>   - Gates 4–5 (`gate-04-05-completion.md`);
+>   - Gate 3, criterion 10 (`verification-10gib.md`: 0 jobs before completion, exactly 1 after, payload `{ videoId }`).
+> - **Versions:** the installed AWS SDK (`^3.1167.0`) and `pg-boss` (`^12.38.2`) are in `nestjs-project/package.json`.
+>
+> The versions and API surface below are the planning snapshot and are not edited.
+
 
 ### @aws-sdk/client-s3
 
