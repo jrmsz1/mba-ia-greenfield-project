@@ -22,6 +22,7 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:integration": "jest --selectProjects integration --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
+    "verify:large-upload": "NODE_ENV=test ts-node --transpile-only scripts/verify-large-upload.ts",
     "test:db:prepare": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' src/test/prepare-test-database.ts",
     "typeorm": "typeorm-ts-node-commonjs",
     "migration:run": "npm run typeorm -- migration:run -d src/database/data-source.ts",
