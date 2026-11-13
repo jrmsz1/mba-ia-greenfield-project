@@ -121,7 +121,7 @@ docker compose -f compose.yaml -f compose.test.yaml run --rm test-api npm run te
 docker compose -f compose.yaml -f compose.test.yaml run --rm test-worker npm run test:media
 ```
 
-In `test-api` the same suites are reported as **skipped**, not passed. `test:media` sets `MEDIA_TOOLS_REQUIRED=1`, so a missing ffprobe fails the run instead of skipping. It runs the `integration` project, so its globalSetup resets the test database like any integration run: never run it concurrently with `npm test` or `npm run test:e2e`. A full regression is `../scripts/verify.sh --full` (`npm test` + `npm run test:e2e` in `test-api`, `npm run test:media` in `test-worker`, `tsc`, eslint).
+In `test-api` the same suites are reported as **skipped**, not passed. `test:media` sets `MEDIA_TOOLS_REQUIRED=1`, so a missing ffprobe fails the run instead of skipping. It runs the `integration` project, so its globalSetup resets the test database like any integration run: never run it concurrently with `npm test` or `npm run test:e2e`. A full regression is `../scripts/verify.sh --full` (`npm test` + `npm run test:e2e` in `test-api`, `npm run test:media` in `test-worker`, `tsc`, eslint). A failing suite keeps its complete output in `../.local/verify-logs/` (git-ignored), redacted: local credential values, presigned-URL signature parameters and bearer tokens are masked.
 
 During active development, run only the tests related to the file being changed (`npm test -- path/to/file.spec.ts`). `--selectProjects` takes several values, so pass paths through `--testPathPatterns` when combining them (`npx jest --selectProjects integration --testPathPatterns src/auth`). Before declaring a task done, run the full suite — see the global `CLAUDE.md` → "Definition of Done (Technical)".
 

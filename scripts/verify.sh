@@ -43,6 +43,34 @@ check() { # label command...
   local label="$1"; shift
   if "$@" >/dev/null 2>&1; then record PASS "$label"; else record FAIL "$label"; fi
 }
+# A failing suite keeps its complete output in .local/verify-logs/ (git-ignored,
+# outside the bind mount). Output is redacted before it is written or shown:
+# every value of the local credential files (exact match), presigned URL
+# signature parameters and bearer tokens.
+LOG_DIR="$REPO/.local/verify-logs"
+redact() {
+  awk -v secrets="$REPO/.local/secrets" '
+    BEGIN {
+      n = 0
+      cmd = "cat \"" secrets "\"/*.env 2>/dev/null"
+      while ((cmd | getline line) > 0) {
+        sub(/\r$/, "", line)
+        i = index(line, "=")
+        if (i > 1 && line !~ /^[[:space:]]*#/) { v = substr(line, i + 1); if (length(v) >= 8) s[++n] = v }
+      }
+      close(cmd)
+    }
+    {
+      for (k = 1; k <= n; k++) {
+        while ((p = index($0, s[k])) > 0) $0 = substr($0, 1, p - 1) "<redacted>" substr($0, p + length(s[k]))
+      }
+      gsub(/X-Amz-Signature=[^&[:space:]"]*/, "X-Amz-Signature=<redacted>")
+      gsub(/X-Amz-Credential=[^&[:space:]"]*/, "X-Amz-Credential=<redacted>")
+      gsub(/X-Amz-Security-Token=[^&[:space:]"]*/, "X-Amz-Security-Token=<redacted>")
+      gsub(/Bearer [A-Za-z0-9._~+\/=-]+/, "Bearer <redacted>")
+      print
+    }'
+}
 run_suite() { # label service command...
   local label="$1" service="$2"; shift 2
   local log
@@ -53,8 +81,17 @@ run_suite() { # label service command...
     tests="$(grep -E '^Tests:' "$log" | tail -n 1 | sed 's/^Tests: *//')"
     record PASS "$label${tests:+ ($tests)}"
   else
+    local slug saved
+    slug="$(printf '%s' "$label" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//' | cut -c1-60)"
+    saved="$LOG_DIR/$(date -u +%Y%m%dT%H%M%SZ)-$slug.log"
+    (umask 077 && mkdir -p "$LOG_DIR" && redact <"$log" >"$saved") || saved=""
     record FAIL "$label — last lines:"
-    tail -n 25 "$log" | sed 's/^/          /'
+    redact <"$log" | tail -n 25 | sed 's/^/          /'
+    if [ -n "$saved" ]; then
+      printf '          full log (redacted): %s\n' "$saved"
+    else
+      printf '          (the full log could not be saved)\n'
+    fi
   fi
   rm -f "$log"
 }

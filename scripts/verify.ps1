@@ -35,16 +35,51 @@ function Check([string]$label, [scriptblock]$cmd) {
   & $cmd *> $null
   Record ($LASTEXITCODE -eq 0) $label
 }
+# A failing suite keeps its complete output in .local\verify-logs\ (git-ignored,
+# outside the bind mount). Output is redacted before it is written or shown:
+# every value of the local credential files (exact match), presigned URL
+# signature parameters and bearer tokens.
+$LogDir = Join-Path $Repo '.local\verify-logs'
+function Get-SecretValues {
+  $dir = Join-Path $Repo '.local\secrets'
+  if (-not (Test-Path $dir)) { return @() }
+  $values = foreach ($file in Get-ChildItem -Path $dir -Filter '*.env' -File) {
+    foreach ($line in [IO.File]::ReadAllLines($file.FullName)) {
+      $i = $line.IndexOf('=')
+      if ($i -gt 0 -and -not $line.TrimStart().StartsWith('#')) {
+        $v = $line.Substring($i + 1).TrimEnd("`r")
+        if ($v.Length -ge 8) { $v }
+      }
+    }
+  }
+  return @($values)
+}
+function Protect-Line([string]$line, [string[]]$secrets) {
+  foreach ($s in $secrets) { $line = $line.Replace($s, '<redacted>') }
+  $line = $line -replace '(X-Amz-(Signature|Credential|Security-Token)=)[^&\s"]*', '$1<redacted>'
+  return ($line -replace '(Bearer )[A-Za-z0-9._~+/=-]+', '$1<redacted>')
+}
 function Run-Suite([string]$label, [string]$service, [string[]]$command) {
   Write-Host "    ...   $label"
-  $out = ComposeTest run --rm $service @command 2>&1 | ForEach-Object { "$_" }
+  $out = @(ComposeTest run --rm $service @command 2>&1 | ForEach-Object { "$_" })
   if ($LASTEXITCODE -eq 0) {
     $tests = $out | Where-Object { $_ -match '^Tests:' } | Select-Object -Last 1
     if ($tests) { $label = "$label ($(($tests -replace '^Tests:\s*', '').Trim()))" }
     Record $true $label
   } else {
+    $secrets = @(Get-SecretValues)
+    $safe = @($out | ForEach-Object { Protect-Line $_ $secrets })
+    $slug = (($label.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-'))
+    if ($slug.Length -gt 60) { $slug = $slug.Substring(0, 60) }
+    $saved = Join-Path $LogDir ("{0}-{1}.log" -f (Get-Date).ToUniversalTime().ToString("yyyyMMdd'T'HHmmss'Z'"), $slug)
+    try {
+      New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+      [IO.File]::WriteAllLines($saved, [string[]]$safe)
+    } catch { $saved = $null }
     Record $false "$label - last lines:"
-    $out | Select-Object -Last 25 | ForEach-Object { Write-Host "          $_" }
+    $safe | Select-Object -Last 25 | ForEach-Object { Write-Host "          $_" }
+    if ($saved) { Write-Host "          full log (redacted): $saved" }
+    else { Write-Host '          (the full log could not be saved)' }
   }
 }
 

@@ -132,6 +132,8 @@ docker compose -f compose.yaml -f compose.test.yaml run --rm test-worker npm run
 
 Sufixos: `*.spec.ts` (unitário), `*.integration-spec.ts` (integração com banco real), `*.e2e-spec.ts` (end-to-end). Testes de integração/e2e rodam em série. A verificação de upload de 10 GiB é separada e nunca roda nesses comandos.
 
+Se uma suíte falhar no `verify`, o console mostra as últimas linhas e o log completo fica em `.local/verify-logs/` (ignorado pelo Git), com os valores das credenciais locais, as assinaturas de URLs pré-assinadas e tokens Bearer mascarados.
+
 **Verificação opcional de 10 GiB (Gate 3).** Não faz parte do Quick Start. O resultado aprovado (arquivo de exatamente 10 737 418 240 B, upload multipart direto ao MinIO com interrupção e retomada, processamento, Range e download, 16/16 critérios) está em [`docs/phases/phase-03-videos/verification-10gib.md`](docs/phases/phase-03-videos/verification-10gib.md). Para reproduzir (precisa de ~30 GB livres; usa apenas o banco, o bucket e a fila de testes):
 
 ```bash
