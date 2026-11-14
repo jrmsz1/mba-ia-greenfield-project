@@ -733,6 +733,7 @@ _Acceptance criteria (revisão):_
 | processing_status | enum `video_processing_status` (`uploading`, `completing`, `uploaded`, `processing`, `ready`, `failed`, `expired`, `cancelled`) | not null — lifecycle per the TD-09 transition table; every write is compare-and-set (per phase-03-videos/TD-09) |
 | failure_reason | varchar(64) | nullable — domain code only (`UPLOAD_LOST`, `UPLOAD_INVALID`, `UNSUPPORTED_FORMAT`, `DURATION_LIMIT_EXCEEDED`, `PROCESSING_FAILED`); never a URL or signature parameter (per phase-03-videos/TD-09, phase-03-videos/TD-13) |
 | idempotency_key | varchar(128) | not null — client-supplied start key (per phase-03-videos/TD-02) |
+| title | varchar(100) | not null — the client's `title` (trimmed) or, without one, the sanitized file name minus its extension; existing rows filled the same way by migration `AddVideoTitle1794622489462` (revision 2026-11-14, `bugfix/phase-03-video-title`: MBA brief, persistence) |
 | original_filename | varchar(255) | not null — sanitized (paths and control characters stripped), used only for `Content-Disposition` (per phase-03-videos/TD-10, phase-03-videos/TD-13) |
 | content_type_hint | varchar(127) | nullable — advisory MIME from the client, never proof of format (per phase-03-videos/TD-13) |
 | declared_size_bytes | bigint | not null, `> 0`, `<= MAX_UPLOAD_BYTES` checked at start (per phase-03-videos/TD-13) |
@@ -782,9 +783,11 @@ Starts an upload: creates the private draft and the S3 multipart upload (per pha
 - filename: string, required — 1..255 characters; sanitized server-side (per phase-03-videos/TD-13)
 - size_bytes: integer, required — `> 0` and `<= MAX_UPLOAD_BYTES` (per phase-03-videos/TD-13)
 - content_type: string, optional — advisory hint only (per phase-03-videos/TD-13)
+- title: string, optional — 1..100 characters, not only spaces, stored trimmed; without it the title is the sanitized file name minus its extension (revision 2026-11-14, `bugfix/phase-03-video-title`: MBA brief, persistence)
 
 **Response 201:** (first call) — **Response 200:** (retry with the same `Idempotency-Key`: the same video and upload, never a second draft or multipart upload, per phase-03-videos/TD-02)
 - id: string — `public_id`
+- title: string (revision 2026-11-14, `bugfix/phase-03-video-title`: MBA brief, persistence)
 - upload_id: string
 - part_size_bytes: integer
 - expected_part_count: integer
@@ -796,7 +799,7 @@ Starts an upload: creates the private draft and the S3 multipart upload (per pha
 - 400 VALIDATION_ERROR: when the body or the `Idempotency-Key` header fails validation
 - 400 UPLOAD_SIZE_EXCEEDED: when `size_bytes` is greater than `MAX_UPLOAD_BYTES`
 - 403 CHANNEL_REQUIRED: when the authenticated user has no channel
-- 409 IDEMPOTENCY_KEY_CONFLICT: when the key was already used with a different `filename` or `size_bytes`
+- 409 IDEMPOTENCY_KEY_CONFLICT: when the key was already used with a different `filename`, `size_bytes` or resolved `title` (title: revision 2026-11-14, `bugfix/phase-03-video-title`: MBA brief, persistence)
 - 429 ACTIVE_UPLOAD_LIMIT_EXCEEDED: when the channel already has `MAX_ACTIVE_UPLOADS_PER_OWNER` uploads in `uploading`/`completing`
 - 429 PENDING_UPLOAD_QUOTA_EXCEEDED: when `size_bytes` would push the channel's pending bytes above `MAX_PENDING_UPLOAD_BYTES_PER_OWNER` (per phase-03-videos/TD-13 revision AMB-2)
 - 429 UPLOAD_START_RATE_EXCEEDED: when the channel already created 20 videos in the last hour (counted in PostgreSQL; per phase-03-videos/TD-13)
@@ -904,6 +907,7 @@ Owner-only status of the draft (per phase-03-videos/TD-12, phase-03-videos/TD-15
 - publication: `draft`
 - processing_status: string
 - failure_reason: string | null
+- title: string (revision 2026-11-14, `bugfix/phase-03-video-title`: MBA brief, persistence)
 - original_filename: string
 - size_bytes: integer
 - duration_seconds: number | null
@@ -954,6 +958,7 @@ Emits a presigned GET that forces download with the sanitized original filename 
 
 - `Idempotency-Key`: required on `POST /videos`, 1..128 printable ASCII characters.
 - `filename`: required, 1..255 characters before sanitization; the stored value strips path segments and control characters.
+- `title`: optional, 1..100 characters, at least one non-space character; stored trimmed (revision 2026-11-14, `bugfix/phase-03-video-title`: MBA brief, persistence).
 - `size_bytes`: required integer, `> 0`; the `MAX_UPLOAD_BYTES` ceiling is a domain check (`UPLOAD_SIZE_EXCEEDED`), not a DTO constant, so it follows configuration.
 - `part_numbers`: required, 1..100 distinct integers in `1..expected_part_count`.
 - `parts` (complete): exactly `expected_part_count` entries, strictly ascending from 1, `etag` matching a quoted or unquoted hex digest with an optional `-N` suffix.

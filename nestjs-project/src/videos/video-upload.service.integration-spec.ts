@@ -184,6 +184,42 @@ describe('VideoUploadService.start (real PostgreSQL + MinIO)', () => {
     await expect(start(svc, 'p-2')).resolves.toMatchObject({ created: true });
   });
 
+  it('stores the given title trimmed, or derives it from the sanitized file name', async () => {
+    const svc = service();
+
+    const titled = await svc.start(owner.user.id, 't-1', {
+      filename: 'clip.mp4',
+      sizeBytes: 6 * MIB,
+      title: '  Summer holidays  ',
+    });
+    const untitled = await svc.start(owner.user.id, 't-2', {
+      filename: '../../My trip.mp4',
+      sizeBytes: 6 * MIB,
+    });
+
+    const rows = dataSource.getRepository(Video);
+    expect((await rows.findOneByOrFail({ id: titled.video.id })).title).toBe(
+      'Summer holidays',
+    );
+    expect((await rows.findOneByOrFail({ id: untitled.video.id })).title).toBe(
+      'My trip',
+    );
+  });
+
+  it('treats a different title under the same key as a conflict, and the same title as a replay', async () => {
+    const svc = service();
+    const input = { filename: 'clip.mp4', sizeBytes: 6 * MIB, title: 'A' };
+    const first = await svc.start(owner.user.id, 't-3', input);
+
+    const replay = await svc.start(owner.user.id, 't-3', input);
+
+    expect(replay.created).toBe(false);
+    expect(replay.video.public_id).toBe(first.video.public_id);
+    await expect(
+      svc.start(owner.user.id, 't-3', { ...input, title: 'B' }),
+    ).rejects.toBeInstanceOf(IdempotencyKeyConflictException);
+  });
+
   it('stores a sanitized filename', async () => {
     const { video } = await service().start(owner.user.id, 'f-1', {
       filename: '../../etc/passwd\u0007.mp4',

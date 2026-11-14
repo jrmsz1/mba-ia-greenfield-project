@@ -188,13 +188,13 @@ NestJS with standard module structure. Source lives in `src/`, compiled output i
 
 ## Videos (Phase 03)
 
-Backend-only phase: draft video, direct multipart upload to object storage, asynchronous processing and delivery URLs. Plan: `docs/phases/phase-03-videos/phase-03-videos.md` (Data Model, API Contracts, Authorization Matrix, Error Catalog, Events/Messages); decisions: `docs/decisions/technical-decisions-phase-03-videos.md` (TD-01…TD-16). No title, description or publishing yet: Phase 03 only writes `publication = draft`, and there is no endpoint for the thumbnail.
+Backend-only phase: draft video, direct multipart upload to object storage, asynchronous processing and delivery URLs. Plan: `docs/phases/phase-03-videos/phase-03-videos.md` (Data Model, API Contracts, Authorization Matrix, Error Catalog, Events/Messages); decisions: `docs/decisions/technical-decisions-phase-03-videos.md` (TD-01…TD-16). Every video has a `title`, set at upload start (`src/videos/video-title.ts`). Editing it, a description and publishing come in Phase 04: Phase 03 only writes `publication = draft`, and there is no endpoint for the thumbnail.
 
 ### Modules
 
 | Directory | Responsibility |
 |---|---|
-| `src/videos/` | `VideosModule`: `VideosController`, the `Video` entity (`videos` table, migration `src/database/migrations/1794453245701-CreateVideos.ts`), upload start (`video-upload.service.ts`), part URLs / status / abort (`video-upload-parts.service.ts`), completion (`video-completion.service.ts`, `upload-recovery.service.ts`, `completion-proof.ts`), delivery URLs (`video-delivery.service.ts`), the ownership policy (`video-access.policy.ts`), the public id (`public-id.generator.ts`), abuse limits (`abuse-limits.ts`, `upload-admission.ts`) |
+| `src/videos/` | `VideosModule`: `VideosController`, the `Video` entity (`videos` table, migrations `src/database/migrations/1794453245701-CreateVideos.ts` and `1794622489462-AddVideoTitle.ts`), the title rule (`video-title.ts`), upload start (`video-upload.service.ts`), part URLs / status / abort (`video-upload-parts.service.ts`), completion (`video-completion.service.ts`, `upload-recovery.service.ts`, `completion-proof.ts`), delivery URLs (`video-delivery.service.ts`), the ownership policy (`video-access.policy.ts`), the public id (`public-id.generator.ts`), abuse limits (`abuse-limits.ts`, `upload-admission.ts`) |
 | `src/storage/` | `StorageModule`: the S3 clients (`s3-clients.provider.ts`, AWS SDK v3), `StorageService` (multipart, presigning, object checks), object keys (`storage-key.ts`), bucket verification at startup |
 | `src/queue/` | `QueueModule`: pg-boss on the same PostgreSQL (schema `PGBOSS_SCHEMA`, default `pgboss`; created by migration `1794452175254-CreatePgBossSchema.ts`), queue creation, `JobPublisherService`, the TypeORM transaction adapter (`typeorm-pgboss-db.adapter.ts`) |
 | `src/media/` | `MediaModule`: `FfprobeRunner` and `FfmpegRunner` (system binaries via `spawn`, bounded time and output), the accepted-format rule (`media-rule.ts`), thumbnail position (`thumbnail-policy.ts`) |
@@ -204,8 +204,8 @@ Backend-only phase: draft video, direct multipart upload to object storage, asyn
 
 | Method and path | Purpose | Success |
 |---|---|---|
-| `POST /videos` | Start an upload: creates the draft row and the S3 multipart session. Header `Idempotency-Key` required; body `filename`, `size_bytes`, optional `content_type`. Returns `id`, `upload_id`, `part_size_bytes`, `expected_part_count`, `upload_expires_at`. | 201 (200 on an idempotent replay) |
-| `GET /videos/:id` | Status of the owner's video (`processing_status`, `failure_reason`, `duration_seconds`, `media_metadata`, `has_thumbnail`, …) | 200 |
+| `POST /videos` | Start an upload: creates the draft row and the S3 multipart session. Header `Idempotency-Key` required; body `filename`, `size_bytes`, optional `content_type` and `title`. Returns `id`, `title`, `upload_id`, `part_size_bytes`, `expected_part_count`, `upload_expires_at`. | 201 (200 on an idempotent replay) |
+| `GET /videos/:id` | Status of the owner's video (`title`, `processing_status`, `failure_reason`, `duration_seconds`, `media_metadata`, `has_thumbnail`, …) | 200 |
 | `POST /videos/:id/upload/part-urls` | Presigned `UploadPart` URLs for 1–100 `part_numbers` | 200 |
 | `GET /videos/:id/upload` | Resume information: parts already in storage (number, size, ETag) and missing part numbers | 200 |
 | `POST /videos/:id/upload/complete` | Completes the upload from the ordered manifest (`parts`: `part_number`, `etag`) and enqueues processing | 200; 202 + `Retry-After` while the outcome is not proven |
@@ -223,7 +223,7 @@ Backend-only phase: draft video, direct multipart upload to object storage, asyn
 
 ### Upload flow (TD-01, TD-02, TD-13)
 
-1. `POST /videos` validates `size_bytes` against `MAX_UPLOAD_BYTES` (default 10 737 418 240 = 10 GiB; larger → `400 UPLOAD_SIZE_EXCEEDED`), reserves quota, inserts the draft (`publication = draft`, `processing_status = uploading`) and calls `CreateMultipartUpload`.
+1. `POST /videos` validates `size_bytes` against `MAX_UPLOAD_BYTES` (default 10 737 418 240 = 10 GiB; larger → `400 UPLOAD_SIZE_EXCEEDED`), reserves quota, inserts the draft (`publication = draft`, `processing_status = uploading`, `title` = the client's title trimmed, or the file name without its extension) and calls `CreateMultipartUpload`.
 2. The client asks for part URLs and sends each part (`UPLOAD_PART_SIZE_BYTES`, default 64 MiB, so 160 parts for 10 GiB) **directly to MinIO** with `PUT` on the presigned URL. The file never goes through the API.
 3. An interrupted upload resumes with `GET /videos/:id/upload` (missing parts) and new part URLs, until `upload_expires_at` (`UPLOAD_EXPIRY_HOURS`, default 24).
 4. `POST /videos/:id/upload/complete` checks the manifest against storage, completes the multipart upload, proves the final object (size, ETag, upload binding) and then, in **one** PostgreSQL transaction, moves the row to `uploaded` and enqueues `video.process`.

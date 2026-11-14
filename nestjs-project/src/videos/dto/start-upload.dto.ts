@@ -3,12 +3,25 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { VIDEO_TITLE_MAX_LENGTH } from '../video-title';
 
 /** Body of POST /videos (plan §API Contracts). */
 export class StartUploadDto {
+  /**
+   * Optional title, stored trimmed. Without it the draft is named after the
+   * file name minus its extension (video-title.ts).
+   */
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(VIDEO_TITLE_MAX_LENGTH)
+  @Matches(/\S/, { message: 'title must not be blank' })
+  title?: string;
+
   /** Original file name; sanitized server-side and used only for downloads. */
   @IsString()
   @MinLength(1)

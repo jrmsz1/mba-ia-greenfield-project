@@ -19,6 +19,7 @@ import {
   sanitizeFilename,
   type OwnerUsage,
 } from './upload-admission';
+import { resolveTitle } from './video-title';
 import {
   ChannelRequiredException,
   IdempotencyKeyConflictException,
@@ -31,6 +32,7 @@ export interface StartUploadInput {
   filename: string;
   sizeBytes: number;
   contentType?: string;
+  title?: string;
 }
 
 export interface StartUploadResult {
@@ -73,16 +75,20 @@ export class VideoUploadService {
     const reservation = await this.reserve(userId, idempotencyKey, {
       ...input,
       filename,
+      title: resolveTitle(input.title, filename),
     });
     const video = await this.ensureMultipartUpload(reservation.video);
     return { video, created: reservation.created };
   }
 
-  /** Phase 1: atomic quota reservation (single transaction, fail-closed). */
+  /**
+   * Phase 1: atomic quota reservation (single transaction, fail-closed).
+   * `input` carries the sanitized file name and the resolved title.
+   */
   private async reserve(
     userId: string,
     idempotencyKey: string,
-    input: StartUploadInput,
+    input: StartUploadInput & { title: string },
   ): Promise<StartUploadResult> {
     return await this.dataSource.transaction(async (manager) => {
       await manager.query('SELECT id FROM "users" WHERE id = $1 FOR UPDATE', [
@@ -101,7 +107,8 @@ export class VideoUploadService {
       if (existing) {
         if (
           existing.original_filename !== input.filename ||
-          existing.declared_size_bytes !== input.sizeBytes
+          existing.declared_size_bytes !== input.sizeBytes ||
+          existing.title !== input.title
         ) {
           throw new IdempotencyKeyConflictException();
         }
@@ -123,6 +130,7 @@ export class VideoUploadService {
         channel_id: channel.id,
         processing_status: 'uploading',
         idempotency_key: idempotencyKey,
+        title: input.title,
         original_filename: input.filename,
         content_type_hint: input.contentType ?? null,
         declared_size_bytes: input.sizeBytes,

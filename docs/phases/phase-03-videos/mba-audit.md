@@ -52,7 +52,7 @@ No test was skipped beyond the FFmpeg suites, which the API image cannot run by 
 | 24 | Secrets outside Git | `.local/` git-ignored, owner-only; `.env.example` with no credential values; `DB_TEST_SERVER_ID=` empty | verify.sh "no secret file tracked by Git" | PASS |
 | 25 | Frontend for Phase 03 | Not in the Phase 03 scope (TD-15 "no frontend"; screens arrive in Phases 04–05) | `project-plan.md` Phase 03; TD-15 | N/A |
 
-**Summary (after CP5):** PASS 24 · PENDING 0 · FAIL 0 · N/A 1 — unchanged, each still justified by the CP5 evidence. Recorded caveats: #16 (native Linux/macOS not run; on this host the setup failed twice before passing, causes in `evaluator-simulation.md` §4) and #17 (one intermittent AuthService integration failure, cause indeterminate). **2026-11-13 (independent evaluation, §9):** #22 reopened for the missing videos section and corrected; the counts are unchanged. One open point (no `title` column, §9.4) awaits the user's decision and is not counted as PASS.
+**Summary (after CP5):** PASS 24 · PENDING 0 · FAIL 0 · N/A 1 — unchanged, each still justified by the CP5 evidence. Recorded caveats: #16 (native Linux/macOS not run; on this host the setup failed twice before passing, causes in `evaluator-simulation.md` §4) and #17 (one intermittent AuthService integration failure, cause indeterminate). **2026-11-13 (independent evaluation, §9):** #22 reopened for the missing videos section and corrected; the counts are unchanged. One open point (no `title` column, §9.4) awaits the user's decision and is not counted as PASS. **2026-11-14:** the user judged the title mandatory; it was corrected on `bugfix/phase-03-video-title` (§9.5).
 
 ## 3. Possible automatic-fail causes (checked)
 
@@ -150,3 +150,31 @@ The brief's persistence paragraph lists, "at least": identification, owner (chan
 - **Storage keys:** they are not stored either. They are derived from the UUID (`videos/<uuid>/original`, `videos/<uuid>/thumbnail.jpg`, TD-10), with `thumbnail_generated_at` recording that the thumbnail exists.
 - **Planning sources:** neither `docs/project-plan.md` (Phase 03), nor the plan's Data Model, nor any TD mentions a title. The brief also says the exact model is defined by the plan.
 - **Status:** recorded as an **open point awaiting the user's decision**. It is not a PASS or a FAIL of any criterion. Adding a column would be a functional change (entity, migration, DTOs, tests), which is outside this documentation-only correction.
+
+### 9.5 `title` — decision and correction (2026-11-14, branch `bugfix/phase-03-video-title`)
+
+**The brief's exact text** (persistence paragraph): "Persistência: uma entidade/tabela de vídeos ligada ao canal, com pelo menos identificação, dono (canal), título, status (ex.: rascunho → processando → pronto/erro), chaves de storage do arquivo e do thumbnail, duração e metadados, e o identificador da URL única. O modelo exato é definido no plano (Data Model)."
+
+The user judged "pelo menos … título" mandatory and authorized a minimal fix. `docs/project-plan.md` keeps title **editing** in Phase 04 ("Edição das informações do vídeo: título, descrição, categoria…"); this fix only stores a title from the first request.
+
+- **Column:** `videos.title varchar(100) NOT NULL` on the `Video` entity.
+- **Migration** `1794622489462-AddVideoTitle.ts`. The table is altered, never recreated:
+  1. adds the column as nullable;
+  2. fills it **only** for existing rows, with the file name minus its extension (or the whole name when nothing is left), cut to 100 characters;
+  3. sets `NOT NULL`.
+  No other column is touched; `down` drops only `title`.
+- **Contract:**
+  - `POST /videos` accepts an optional `title`: 1..100 characters, not only spaces, stored trimmed. Without it, the title is the sanitized file name minus its extension (`src/videos/video-title.ts`, the same rule as the migration).
+  - `title` is returned by `POST /videos` and `GET /videos/:id`.
+  - A replay with the same `Idempotency-Key` and a different title answers `IDEMPOTENCY_KEY_CONFLICT`, like a different `filename` or `size_bytes`.
+  - Clients that do not send `title` keep working.
+- **Tests:**
+  - unit: `video-title.spec.ts`, `video-response.mapper.spec.ts`;
+  - integration: `migrations.integration-spec.ts` (backfill, NOT NULL, revert, migration count), `video.entity.integration-spec.ts` (NOT NULL, 100 characters), `video-upload.service.integration-spec.ts` (stored / derived title, idempotency);
+  - e2e: scenario 1.6 `start-stores-title`, with its entry in `nestjs-project/specs/videos-start-and-status.plan.md`.
+- **Docs:**
+  - the plan's Data Model, API Contracts and Validation Rules (revision 2026-11-14);
+  - `nestjs-project/CLAUDE.md` → "Videos (Phase 03)";
+  - `nestjs-project/openapi.json` regenerated.
+- **Storage keys:** still derived and not stored, as decided by TD-10 and the plan's Data Model ("Storage keys (derived, not stored)"). This fix does not change them.
+- **Result:** the open point in §9.4 is closed once the full Definition of Done passes on the integrated content. The final DoD result and SHAs are reported with the integration.
