@@ -141,6 +141,40 @@ describe('videos-start-and-status', () => {
     expect(await ctx.dataSource.getRepository(Video).count()).toBe(0);
   });
 
+  it('1.6 start-stores-title', async () => {
+    const post = (key: string, body: Record<string, unknown>) =>
+      request(ctx.app.getHttpServer())
+        .post('/videos')
+        .set('Authorization', `Bearer ${owner.token}`)
+        .set('Idempotency-Key', key)
+        .send({
+          filename: 'Summer holidays.mp4',
+          size_bytes: 12 * MIB,
+          ...body,
+        });
+
+    const titled = await post('t-1', { title: '  My trip  ' });
+    const untitled = await post('t-2', {});
+    const blank = await post('t-3', { title: '   ' });
+    const tooLong = await post('t-4', { title: 'a'.repeat(101) });
+
+    expect(titled.status).toBe(201);
+    expect(bodyField(titled, 'title')).toBe('My trip');
+    expect(untitled.status).toBe(201);
+    expect(bodyField(untitled, 'title')).toBe('Summer holidays');
+    const status = await request(ctx.app.getHttpServer())
+      .get(`/videos/${bodyField(titled, 'id') as string}`)
+      .set('Authorization', `Bearer ${owner.token}`);
+    expect(status.status).toBe(200);
+    expect(bodyField(status, 'title')).toBe('My trip');
+    expect(bodyField(status, 'original_filename')).toBe('Summer holidays.mp4');
+    for (const rejected of [blank, tooLong]) {
+      expect(rejected.status).toBe(400);
+      expect(bodyField(rejected, 'error')).toBe('VALIDATION_ERROR');
+    }
+    expect(await ctx.dataSource.getRepository(Video).count()).toBe(2);
+  });
+
   it('1.4 start-is-not-throttled-by-auth-limit', async () => {
     ctx.upload.maxActiveUploadsPerOwner = 100;
     const statuses: number[] = [];

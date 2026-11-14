@@ -12,6 +12,7 @@ import type { Video } from './entities/video.entity';
 export function toStartUploadResponse(video: Video): StartUploadResponseDto {
   return {
     id: video.public_id,
+    title: video.title,
     upload_id: video.upload_id ?? '',
     part_size_bytes: video.part_size_bytes,
     expected_part_count: video.expected_part_count,
@@ -27,6 +28,7 @@ export function toVideoResponse(video: Video): VideoResponseDto {
     publication: video.publication,
     processing_status: video.processing_status,
     failure_reason: video.failure_reason,
+    title: video.title,
     original_filename: video.original_filename,
     size_bytes: video.declared_size_bytes,
     duration_seconds: video.duration_seconds,

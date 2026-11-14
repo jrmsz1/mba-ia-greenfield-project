@@ -5,6 +5,7 @@ import { CreateUsersAndChannels1775687773260 } from '../database/migrations/1775
 import { CreateAuthTokens1777579850478 } from '../database/migrations/1777579850478-CreateAuthTokens';
 import { CreatePgBossSchema1794452175254 } from '../database/migrations/1794452175254-CreatePgBossSchema';
 import { CreateVideos1794453245701 } from '../database/migrations/1794453245701-CreateVideos';
+import { AddVideoTitle1794622489462 } from '../database/migrations/1794622489462-AddVideoTitle';
 
 /**
  * Explicit migration list for test DataSources (ts-jest cannot load TypeORM
@@ -16,6 +17,7 @@ export const TEST_MIGRATIONS: (new () => MigrationInterface)[] = [
   CreateAuthTokens1777579850478,
   CreatePgBossSchema1794452175254,
   CreateVideos1794453245701,
+  AddVideoTitle1794622489462,
 ];
 
 const MIGRATIONS_DIR = join(__dirname, '..', 'database', 'migrations');

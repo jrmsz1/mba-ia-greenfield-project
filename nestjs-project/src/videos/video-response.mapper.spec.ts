@@ -12,6 +12,7 @@ const video = {
   processing_status: 'uploading',
   failure_reason: null,
   idempotency_key: 'key-1',
+  title: 'My clip',
   original_filename: 'clip.mp4',
   declared_size_bytes: 12_582_912,
   part_size_bytes: 5_242_880,
@@ -31,6 +32,7 @@ describe('video-response.mapper', () => {
   it('should map the start response with the public id and the upload plan', () => {
     expect(toStartUploadResponse(video)).toEqual({
       id: 'aZ3kQ9bX0pL',
+      title: 'My clip',
       upload_id: 'upload-123',
       part_size_bytes: 5_242_880,
       expected_part_count: 3,
@@ -51,6 +53,10 @@ describe('video-response.mapper', () => {
     expect(JSON.stringify(body)).not.toContain(
       '6f1c2b3a-0000-4000-8000-000000000001',
     );
+  });
+
+  it('should return the title in the status response', () => {
+    expect(toVideoResponse(video).title).toBe('My clip');
   });
 
   it('should derive has_thumbnail from thumbnail_generated_at', () => {

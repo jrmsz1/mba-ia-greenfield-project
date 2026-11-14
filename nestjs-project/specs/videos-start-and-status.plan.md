@@ -81,6 +81,23 @@ target_file: nestjs-project/test/videos-start-and-status.e2e-spec.ts
   2. GET /videos/<id-existente> sem `Authorization`
     - expect: status `401`
 
+#### 1.6. start-stores-title
+
+**Covers AC:** MBA brief, persistence (the videos table holds at least a title) — `bugfix/phase-03-video-title`
+**Source:** manual
+**Last sync:** 2026-11-14T00:00:00Z
+
+**Steps:**
+  1. POST /videos com `{ "filename": "Summer holidays.mp4", "size_bytes": 12582912, "title": "  My trip  " }`
+    - expect: status `201` com `title: "My trip"` (sem espaços nas pontas)
+  2. POST /videos com o mesmo arquivo e sem `title`
+    - expect: status `201` com `title: "Summer holidays"` (nome do arquivo sem a extensão)
+  3. GET /videos/<id do passo 1>
+    - expect: status `200` com `title: "My trip"` e `original_filename: "Summer holidays.mp4"`
+  4. POST /videos com `title` só de espaços, e outro com 101 caracteres
+    - expect: status `400` com `error: "VALIDATION_ERROR"` nos dois
+    - expect: apenas as duas linhas dos passos 1 e 2 em `videos`
+
 ### 2. Falhas e recuperação de CreateMultipartUpload
 
 **Setup:** igual ao grupo 1, com `StorageService` sobrescrito via `overrideProvider` por um dublê que delega ao MinIO real e injeta a falha pedida em `CreateMultipartUpload` (rejeição definitiva, timeout, ou criação concluída com resposta perdida).
