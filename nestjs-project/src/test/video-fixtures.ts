@@ -40,6 +40,7 @@ export function buildVideoValues(
     channel_id: channelId,
     processing_status: 'uploading',
     idempotency_key: `key-${randomUUID()}`,
+    title: 'clip',
     original_filename: 'clip.mp4',
     declared_size_bytes: 10 * 1024 * 1024,
     part_size_bytes: 5 * 1024 * 1024,

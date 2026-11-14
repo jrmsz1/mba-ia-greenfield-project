@@ -7,6 +7,7 @@ import { CreateUsersAndChannels1775687773260 } from './migrations/1775687773260-
 import { CreateAuthTokens1777579850478 } from './migrations/1777579850478-CreateAuthTokens';
 import { CreatePgBossSchema1794452175254 } from './migrations/1794452175254-CreatePgBossSchema';
 import { CreateVideos1794453245701 } from './migrations/1794453245701-CreateVideos';
+import { AddVideoTitle1794622489462 } from './migrations/1794622489462-AddVideoTitle';
 import {
   createTestDataSource,
   resetTestSchema,
@@ -119,6 +120,7 @@ describe('Database migrations (integration)', () => {
   it('should revert the videos migration, removing its table and ENUM types', async () => {
     await ds().runMigrations({ transaction: 'each' });
 
+    await ds().undoLastMigration({ transaction: 'each' }); // AddVideoTitle
     await ds().undoLastMigration({ transaction: 'each' });
 
     expect(await existingTables(ds(), ['videos'])).toEqual([]);
@@ -132,6 +134,7 @@ describe('Database migrations (integration)', () => {
   it('should revert the pg-boss migration, removing only the queue schema', async () => {
     await ds().runMigrations({ transaction: 'each' });
 
+    await ds().undoLastMigration({ transaction: 'each' }); // AddVideoTitle
     await ds().undoLastMigration({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
 
@@ -146,6 +149,7 @@ describe('Database migrations (integration)', () => {
   it('should revert the auth tokens migration, removing its tables and ENUM type', async () => {
     await ds().runMigrations({ transaction: 'each' });
 
+    await ds().undoLastMigration({ transaction: 'each' }); // AddVideoTitle
     await ds().undoLastMigration({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
@@ -163,6 +167,7 @@ describe('Database migrations (integration)', () => {
 
   it('should re-apply the reverted migrations', async () => {
     await ds().runMigrations({ transaction: 'each' });
+    await ds().undoLastMigration({ transaction: 'each' }); // AddVideoTitle
     await ds().undoLastMigration({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
     await ds().undoLastMigration({ transaction: 'each' });
@@ -173,8 +178,106 @@ describe('Database migrations (integration)', () => {
       CreateAuthTokens1777579850478.name,
       CreatePgBossSchema1794452175254.name,
       CreateVideos1794453245701.name,
+      AddVideoTitle1794622489462.name,
     ]);
     expect(await existingTables(ds(), MANAGED_TABLES)).toEqual(MANAGED_TABLES);
     expect(await queueSchemaExists(ds())).toBe(true);
+  });
+
+  describe('AddVideoTitle', () => {
+    async function migrateUpToVideos(): Promise<void> {
+      await ds().runMigrations({ transaction: 'each' });
+      await ds().undoLastMigration({ transaction: 'each' }); // AddVideoTitle
+    }
+
+    async function insertLegacyVideo(filename: string): Promise<string> {
+      const suffix = Math.random().toString(36).slice(2, 10);
+      const [user] = await ds().query<{ id: string }[]>(
+        `INSERT INTO "users" ("email", "password")
+         VALUES ($1, 'hash') RETURNING id`,
+        [`legacy-${suffix}@example.com`],
+      );
+      const [channel] = await ds().query<{ id: string }[]>(
+        `INSERT INTO "channels" ("name", "nickname", "user_id")
+         VALUES ('Legacy', $1, $2) RETURNING id`,
+        [`legacy${suffix}`, user.id],
+      );
+      const [video] = await ds().query<{ id: string }[]>(
+        `INSERT INTO "videos" ("public_id", "channel_id", "processing_status",
+           "idempotency_key", "original_filename", "declared_size_bytes",
+           "part_size_bytes", "expected_part_count", "upload_binding_token",
+           "upload_expires_at")
+         VALUES (substr(md5(random()::text), 1, 11), $1, 'ready', 'k', $2,
+           100, 100, 1, 'token', now()) RETURNING id`,
+        [channel.id, filename],
+      );
+      return video.id;
+    }
+
+    async function videoRow(
+      id: string,
+    ): Promise<{ title: string; original_filename: string }> {
+      const [row] = await ds().query<
+        { title: string; original_filename: string }[]
+      >('SELECT "title", "original_filename" FROM "videos" WHERE id = $1', [
+        id,
+      ]);
+      return row;
+    }
+
+    it('fills the title of existing rows from the file name and keeps the file name', async () => {
+      await migrateUpToVideos();
+      const plain = await insertLegacyVideo('Summer holidays.mp4');
+      const dotted = await insertLegacyVideo('archive.final.mp4');
+      const onlyExtension = await insertLegacyVideo('.mp4');
+      const long = await insertLegacyVideo(`${'a'.repeat(120)}.mp4`);
+
+      await ds().runMigrations({ transaction: 'each' });
+
+      expect(await videoRow(plain)).toEqual({
+        title: 'Summer holidays',
+        original_filename: 'Summer holidays.mp4',
+      });
+      expect((await videoRow(dotted)).title).toBe('archive.final');
+      expect((await videoRow(onlyExtension)).title).toBe('.mp4');
+      expect((await videoRow(long)).title).toBe('a'.repeat(100));
+    });
+
+    it('makes the title NOT NULL with at most 100 characters', async () => {
+      await ds().runMigrations({ transaction: 'each' });
+
+      const [column] = await ds().query<
+        { is_nullable: string; character_maximum_length: number }[]
+      >(
+        `SELECT is_nullable, character_maximum_length
+           FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'videos'
+            AND column_name = 'title'`,
+      );
+      expect(column).toEqual({
+        is_nullable: 'NO',
+        character_maximum_length: 100,
+      });
+    });
+
+    it('reverts by dropping only the title column', async () => {
+      await migrateUpToVideos();
+      const id = await insertLegacyVideo('clip.mp4');
+      await ds().runMigrations({ transaction: 'each' });
+
+      await ds().undoLastMigration({ transaction: 'each' });
+
+      const columns = await ds().query<{ column_name: string }[]>(
+        `SELECT column_name FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'videos'
+            AND column_name = 'title'`,
+      );
+      expect(columns).toEqual([]);
+      const [row] = await ds().query<{ original_filename: string }[]>(
+        'SELECT "original_filename" FROM "videos" WHERE id = $1',
+        [id],
+      );
+      expect(row.original_filename).toBe('clip.mp4');
+    });
   });
 });

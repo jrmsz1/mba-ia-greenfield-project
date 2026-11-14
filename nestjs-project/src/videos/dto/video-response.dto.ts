@@ -12,6 +12,9 @@ export class StartUploadResponseDto {
   @ApiProperty({ example: 'aZ3kQ9bX0pL', description: 'public_id' })
   id: string;
 
+  @ApiProperty({ example: 'Summer holidays', maxLength: 100 })
+  title: string;
+
   @ApiProperty()
   upload_id: string;
 
@@ -44,6 +47,9 @@ export class VideoResponseDto {
 
   @ApiProperty({ nullable: true, type: String })
   failure_reason: string | null;
+
+  @ApiProperty({ example: 'Summer holidays', maxLength: 100 })
+  title: string;
 
   @ApiProperty()
   original_filename: string;

@@ -126,6 +126,7 @@ export class VideosController {
         filename: dto.filename,
         sizeBytes: dto.size_bytes,
         contentType: dto.content_type,
+        title: dto.title,
       },
     );
     res.status(created ? 201 : 200);

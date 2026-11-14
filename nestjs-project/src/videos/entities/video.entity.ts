@@ -71,6 +71,10 @@ export class Video {
   @Column({ type: 'varchar', length: 128 })
   idempotency_key: string;
 
+  /** Given at upload start or derived from the file name (video-title.ts). */
+  @Column({ type: 'varchar', length: 100 })
+  title: string;
+
   @Column({ type: 'varchar', length: 255 })
   original_filename: string;
 

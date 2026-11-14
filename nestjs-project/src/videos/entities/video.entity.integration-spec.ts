@@ -75,6 +75,18 @@ describe('Video entity (integration)', () => {
     expect(withToken.upload_binding_token).toBe('secret-binding');
   });
 
+  it('should reject a video without a title', async () => {
+    await expect(
+      insert({ title: null } as unknown as Partial<Video>),
+    ).rejects.toBeInstanceOf(QueryFailedError);
+  });
+
+  it('should reject a title longer than 100 characters', async () => {
+    await expect(insert({ title: 'a'.repeat(101) })).rejects.toBeInstanceOf(
+      QueryFailedError,
+    );
+  });
+
   it('should reject a duplicate public_id', async () => {
     await insert({ public_id: 'AAAAAAAAAAA' } as Partial<Video>);
 
